@@ -26,18 +26,20 @@ This file separates implementation from evidence. A checked implementation item 
 | Compose/device/end-to-end tests | **Passed:** 5 Compose tests + 5 app tests on API 36.1 and 37, including create/recreate/edit/search/legacy/delete, Keystore tamper/atomic recovery, and worker outcomes. |
 | Real Android-to-Python HTTP | **Passed: 1 journey** on API 36.1 and 37, covering authenticated snapshot, locally pending create, upload, project/body edit, and deletion through Retrofit and SQLite. The runner cleans its temporary credentials/server/database. |
 | Local Markdown target check | **Passed:** local file/directory targets resolve. External URLs and heading anchors are not covered by this script. |
-| Hosted GitHub Actions | Host checks passed: 40 JVM tests, 18 server tests, lint, and debug assemblies. A captured System UI ANR dialog explained the hosted focus failure. Runner disk cleanup and compilation before emulator startup with bounded resources are supplied; full hosted rerun pending. All 24 device tests pass locally on the exact API 36 image. See [evidence](verification/RESULTS.md#hosted-ci-investigation). |
+| Hosted GitHub Actions | **Passed: 40 JVM + 18 server + 24 device tests**, lint, and both debug assemblies. No failures, errors, or skips. Functional device CI uses API 36 AOSP ATD; the full Google APIs image also passed all 24 tests locally. See [evidence and image scope](verification/RESULTS.md#hosted-ci-investigation). |
 | Macrobenchmark/profile generation | Gradle task graph resolves in dry-run. Release-derived artifacts and benchmark sources were not built/run; no profile or physical-device timing generated. |
 
 ## Further acceptance work
 
 - [x] Run the device suite on Android 16/API 36.1 and current target Android 17/API 37.
-- [ ] Run the device suite on minimum API 26 and the exact API 36 image selected by hosted CI.
+- [x] Run all 24 functional device tests on API 36 Google APIs locally and API 36 AOSP ATD in hosted CI.
+- [ ] Run the device suite on minimum API 26.
 - [x] Visually inspect the journal at normal and 200% font size and in a tablet-sized dark window. This is a bounded layout review, not comprehensive accessibility certification.
 - [ ] Complete manual TalkBack, all screens at large fonts, foldables, RTL, keyboard/switch access, and notification denial/settings revocation review on real devices.
 - [ ] Exercise two local clients against the Python server, including simultaneous edits, disconnected deletion, token invalidation, and process termination during upload.
 - [ ] Measure cold startup, jank, memory, and battery on representative physical devices; generate and validate a baseline profile before committing measured performance claims.
-- [ ] Test a real hosted GitHub Actions run after the repository has its intended remote and branch rules.
+- [x] Verify a real hosted GitHub Actions run on the intended repository's main branch.
+- [ ] Configure and review protected branch rules for the intended contribution/release process.
 
 ## Production work deliberately outside the sample
 
