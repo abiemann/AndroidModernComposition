@@ -2,6 +2,7 @@ name: Verify Field Notes
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -25,7 +26,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Install compile SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
@@ -34,11 +35,12 @@ jobs:
           python scripts/verify-doc-links.py
           python -m unittest discover -s server -v
       - name: Test, lint, and assemble development apps
+        id: host-tests
         run: |
           chmod +x gradlew
           ./gradlew --stacktrace :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest :app:lintDemoDebug :app:assembleDemoDebug :app:assembleLocalDebug
       - name: Summarize host tests
-        if: always()
+        if: always() && steps.host-tests.outcome != 'skipped'
         run: python scripts/summarize-tests.py --require-results
       - name: Preserve reports and demo APK
         if: always()
@@ -64,7 +66,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Install compile SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
@@ -75,6 +77,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           chmod +x gradlew
       - name: Room, Compose, and application journeys
+        id: device-tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -84,7 +87,7 @@ jobs:
           disable-animations: true
           script: ./gradlew --no-parallel --stacktrace :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
       - name: Summarize device tests
-        if: always()
+        if: always() && steps.device-tests.outcome != 'skipped'
         run: python scripts/summarize-tests.py --require-results
       - name: Preserve device reports
         if: always()
