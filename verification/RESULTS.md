@@ -14,7 +14,7 @@ Initial app verification executed October 27, 2026, America/Los_Angeles. The CI 
 | Documentation | Relative Markdown file/directory links validated. External URL availability and heading anchors are outside the checker. |
 | Benchmark configuration | Both benchmark/profile compilation task graphs resolve in --dry-run. No release-derived artifact, app-specific baseline profile, or timing result produced. |
 
-**83 distinct tests passed.** The device cases were repeated across two Android versions; repeats are not added to the distinct-case count. Hosted CI, API 26, physical-device performance, signed releases, and Play deployment remain unverified.
+**83 distinct tests passed.** The device cases were repeated across Android versions; repeats are not added to the distinct-case count. Hosted CI passed 82 of these cases (the real Android-to-Python journey remains a separate local check). API 26, physical-device performance, signed releases, and Play deployment remain unverified.
 
 ## Hosted CI investigation
 
@@ -28,7 +28,11 @@ The [captured hosted failure](https://github.com/abiemann/AndroidModernCompositi
 
 CI now builds the test APKs before starting the emulator, limits Gradle memory/workers, and uses an in-process Kotlin compiler with a single-use Gradle process. Both the [resource-bounded run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40651241577) and the [pinned emulator 37.1.11 comparison](https://github.com/abiemann/AndroidModernComposition/actions/runs/40653933578) still captured the System UI ANR. The latter retrieved system traces: KeyguardService exceeded its 20-second startup deadline, with System UI's main thread accumulating 15.389 seconds of runnable wait against 0.620 seconds of CPU time. Several Google services also timed out during boot, before the app started. This supports boot scheduling pressure, not an app ANR or an established emulator-version regression.
 
-The hosted functional suite now selects the official API 36 AOSP Automated Test Device image, which reduces unrelated preinstalled services and rendering work. The app has no Google Play services dependency. All 24 test cases and window-focus assertions remain enabled. ATD does not replace the full-image visual checks or physical-device performance acceptance; see [Android's ATD guidance](https://developer.android.com/studio/test/managed-devices#atd). Failure collection retains screenshots, the last ANR report, and system traces with bounded diagnostic commands. A passing full hosted run remains pending.
+The hosted functional suite now selects the official API 36 AOSP Automated Test Device image, which omits System UI and unrelated preinstalled apps/services and reduces rendering work. It verifies app behavior, not system-UI integration. The app has no Google Play services dependency. All 24 test cases and window-focus assertions remain enabled. ATD does not replace the full-image visual checks or physical-device performance acceptance; see [Android's ATD guidance](https://developer.android.com/studio/test/managed-devices#use-atd). Failure collection retains screenshots, the last ANR report, and system traces with bounded diagnostic commands.
+
+**[Hosted run 40655721754 passed](https://github.com/abiemann/AndroidModernComposition/actions/runs/40655721754)** at source commit `510d530`: 40 JVM tests, 18 Python server tests, 24 Android tests (14 data, 5 Compose, 5 app), lint, and both development APK assemblies. The JUnit summaries report zero failures, errors, and skipped cases. No test was removed or assertion disabled to obtain the pass.
+
+The separate AGP 9.4.1 dependency PR also required a companion Gradle 9.6.0 wrapper upgrade, verified against the [AGP compatibility requirements](https://developer.android.com/build/releases/agp-9-4-0-release-notes). That repair stays on the dependency PR; main retains its tested AGP 9.3.2 / Gradle 9.5.0 pair.
 
 ## Reproduce
 
@@ -61,4 +65,4 @@ These corrections have regression coverage. The [study guide](../docs/STUDY_GUID
 
 The journal was inspected on the emulator in normal phone layout, at 200% font size, and in a tablet-sized dark window. The empty state now offers one creation control, avoiding overlapping duplicate actions at large text sizes. Images in this directory are screenshots, not performance or accessibility certification.
 
-Full TalkBack traversal, all editor/settings states at large font sizes, RTL, foldables, physical device/battery profiling, hosted CI, and production operations remain in [TODO](../TODO.md).
+Full TalkBack traversal, all editor/settings states at large font sizes, RTL, foldables, physical device/battery profiling, and production operations remain in [TODO](../TODO.md).
