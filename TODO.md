@@ -26,7 +26,7 @@ This file separates implementation from evidence. A checked implementation item 
 | Compose/device/end-to-end tests | **Passed:** 5 Compose tests + 5 app tests on API 36.1 and 37, including create/recreate/edit/search/legacy/delete, Keystore tamper/atomic recovery, and worker outcomes. |
 | Real Android-to-Python HTTP | **Passed: 1 journey** on API 36.1 and 37, covering authenticated snapshot, locally pending create, upload, project/body edit, and deletion through Retrofit and SQLite. The runner cleans its temporary credentials/server/database. |
 | Local Markdown target check | **Passed:** local file/directory targets resolve. External URLs and heading anchors are not covered by this script. |
-| Hosted GitHub Actions | Host checks passed: 40 JVM tests, 18 server tests, lint, and debug assemblies. Runner disk cleanup and window-failure diagnostics are supplied; hosted device verification remains pending while a missing-focus state is investigated. All 24 device tests pass locally on the exact API 36 image. See [evidence](verification/RESULTS.md#hosted-ci-investigation). |
+| Hosted GitHub Actions | Host checks passed: 40 JVM tests, 18 server tests, lint, and debug assemblies. A captured System UI ANR dialog explained the hosted focus failure. Runner disk cleanup and compilation before emulator startup with bounded resources are supplied; full hosted rerun pending. All 24 device tests pass locally on the exact API 36 image. See [evidence](verification/RESULTS.md#hosted-ci-investigation). |
 | Macrobenchmark/profile generation | Gradle task graph resolves in dry-run. Release-derived artifacts and benchmark sources were not built/run; no profile or physical-device timing generated. |
 
 ## Further acceptance work

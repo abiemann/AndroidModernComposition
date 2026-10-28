@@ -1,6 +1,6 @@
 # Verification record
 
-Executed October 27, 2026, America/Los_Angeles. UTC timestamps in generated JUnit reports fall on October 28.
+Initial app verification executed October 27, 2026, America/Los_Angeles. The CI investigation continued October 28. UTC timestamps in the initial generated JUnit reports fall on October 28.
 
 ## Results
 
@@ -22,7 +22,11 @@ The [initial hosted run](https://github.com/abiemann/AndroidModernComposition/ac
 
 The [next main run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639357512) passed 40 JVM tests, 18 server tests, lint, and both debug assemblies. Its emulator could not start: the data partition needed 7.2 GB but only 5.7 GB was free. The configured smaller partition did not reduce the image's actual requirement, so the device job now frees the hosted runner's unused preinstalled NDK toolchains instead.
 
-A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test now awaits the intended resumed, focused window and explicitly selects its decor before Espresso assertions and Back, then awaits MainActivity focus on return. All five app device tests passed locally on API 36.1 and 37, and all 24 device tests passed in CI order on a clean Pixel 6/API 36 Google APIs revision 7 image, with animations disabled. Hosted API 36 still exposed a missing-focus state, so the test now checks initial window readiness and records lock state, window/input diagnostics, and a failure screenshot before teardown. The full hosted rerun remains pending; local success is not being substituted for it.
+A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test now awaits the intended resumed, focused window and explicitly selects its decor before Espresso assertions and Back, then awaits MainActivity focus on return. All five app device tests passed locally on API 36.1 and 37, and all 24 device tests passed in CI order on a clean Pixel 6/API 36 Google APIs revision 7 image, with animations disabled.
+
+The [captured hosted failure](https://github.com/abiemann/AndroidModernComposition/actions/runs/40648093705) identified the focus owner: a **System UI ANR dialog**, above the app before any journal interaction. WindowManager and InputDispatcher agreed, and the app's input connection was responsive. The [screenshot](ci-system-ui-anr.png) records the evidence. Compose semantic actions can run behind another window, which is why the real-window preconditions and Espresso checks remain essential. A deliberately sleeping local test device also verified that the diagnostic path preserves failure, reports the device state, and captures its screenshot; the normal suite passed again after waking it.
+
+CI now builds the test APKs before starting the emulator, limits Gradle memory/workers, and uses an in-process Kotlin compiler with a single-use Gradle process. This reduces resource contention during emulator startup. The full hosted rerun remains pending; local success is not being substituted for it.
 
 ## Reproduce
 
