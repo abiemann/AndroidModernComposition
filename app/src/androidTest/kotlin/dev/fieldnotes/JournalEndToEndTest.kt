@@ -1,6 +1,8 @@
 package dev.fieldnotes
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.os.PowerManager
 import android.view.View
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -30,6 +32,8 @@ class JournalEndToEndTest {
         val revised = "$title revised"
         val body = "A field observation that survives Activity recreation."
 
+        // Semantic actions can run behind a lock screen; require a usable window first.
+        awaitFocusedDecor(MainActivity::class.java)
         compose.onAllNodesWithText("New note").onFirst().performClick()
         waitForText("Title")
         compose.onNodeWithText("Title").performTextInput(title)
@@ -77,17 +81,32 @@ class JournalEndToEndTest {
     private fun awaitFocusedDecor(activityClass: Class<out Activity>): View {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         var focusedDecor: View? = null
-        compose.waitUntil(10_000) {
-            // Both the lifecycle monitor and View window state must be read on the main thread.
-            instrumentation.runOnMainSync {
-                focusedDecor = ActivityLifecycleMonitorRegistry.getInstance()
-                    .getActivitiesInStage(Stage.RESUMED)
-                    .firstOrNull { activityClass.isInstance(it) }
-                    ?.window?.decorView
-                    ?.takeIf { it.isAttachedToWindow && it.isShown && it.isLaidOut &&
+        var lastSnapshot = "No main-thread state was captured."
+        try {
+            compose.waitUntil(10_000) {
+                // Read lifecycle, View, and system state together on the main thread.
+                instrumentation.runOnMainSync {
+                    val resumed = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                    val activity = resumed.firstOrNull { activityClass.isInstance(it) }
+                    val decor = activity?.window?.decorView
+                    val keyguard = instrumentation.targetContext.getSystemService(KeyguardManager::class.java)
+                    val power = instrumentation.targetContext.getSystemService(PowerManager::class.java)
+                    lastSnapshot = "expected=${activityClass.name}; " +
+                        "resumed=${resumed.map { it.javaClass.name }}; " +
+                        "matchingActivity=$activity; decor=$decor; " +
+                        "attached=${decor?.isAttachedToWindow}; shown=${decor?.isShown}; " +
+                        "laidOut=${decor?.isLaidOut}; windowFocus=${decor?.hasWindowFocus()}; " +
+                        "layoutRequested=${decor?.isLayoutRequested}; " +
+                        "keyguardLocked=${keyguard?.isKeyguardLocked}; deviceLocked=${keyguard?.isDeviceLocked}; " +
+                        "interactive=${power?.isInteractive}"
+                    focusedDecor = decor?.takeIf { it.isAttachedToWindow && it.isShown && it.isLaidOut &&
                         it.hasWindowFocus() && !it.isLayoutRequested }
+                }
+                focusedDecor != null
             }
-            focusedDecor != null
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Activity window did not become ready. Last state: $lastSnapshot", timeout)
         }
         return checkNotNull(focusedDecor)
     }
