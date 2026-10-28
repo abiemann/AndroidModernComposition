@@ -1,6 +1,6 @@
 # Verification record
 
-Executed October 27, 2026, America/Los_Angeles. UTC timestamps in generated JUnit reports fall on October 28.
+Initial app verification executed October 27, 2026, America/Los_Angeles. The CI investigation continued October 28. UTC timestamps in the initial generated JUnit reports fall on October 28.
 
 ## Results
 
@@ -20,7 +20,15 @@ Executed October 27, 2026, America/Los_Angeles. UTC timestamps in generated JUni
 
 The [initial hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40638966296) failed during Android SDK setup because `setup-android@v3` requested the retired `tools` package. No app tests ran in that attempt. The workflows now use v4.
 
-The [next main run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639357512) passed 40 JVM tests, 18 server tests, lint, and both debug assemblies. Its emulator could not start: the default data partition needed 7.2 GB but only 5.7 GB was free. CI now specifies a 2 GB test partition. A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test now awaits the intended resumed, focused window and explicitly selects its decor before Espresso assertions and Back, then awaits MainActivity focus on return. A full hosted rerun of these corrections is pending.
+The [next main run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639357512) passed 40 JVM tests, 18 server tests, lint, and both debug assemblies. Its emulator could not start: the data partition needed 7.2 GB but only 5.7 GB was free. The configured smaller partition did not reduce the image's actual requirement, so the device job now frees the hosted runner's unused preinstalled NDK toolchains instead.
+
+A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test now awaits the intended resumed, focused window and explicitly selects its decor before Espresso assertions and Back, then awaits MainActivity focus on return. All five app device tests passed locally on API 36.1 and 37, and all 24 device tests passed in CI order on a clean Pixel 6/API 36 Google APIs revision 7 image, with animations disabled.
+
+The [captured hosted failure](https://github.com/abiemann/AndroidModernComposition/actions/runs/40648093705) identified the focus owner: a **System UI ANR dialog**, above the app before any journal interaction. WindowManager and InputDispatcher agreed, and the app's input connection was responsive. The [screenshot](ci-system-ui-anr.png) records the evidence. Compose semantic actions can run behind another window, which is why the real-window preconditions and Espresso checks remain essential. A deliberately sleeping local test device also verified that the diagnostic path preserves failure, reports the device state, and captures its screenshot; the normal suite passed again after waking it.
+
+CI now builds the test APKs before starting the emulator, limits Gradle memory/workers, and uses an in-process Kotlin compiler with a single-use Gradle process. Both the [resource-bounded run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40651241577) and the [pinned emulator 37.1.11 comparison](https://github.com/abiemann/AndroidModernComposition/actions/runs/40653933578) still captured the System UI ANR. The latter retrieved system traces: KeyguardService exceeded its 20-second startup deadline, with System UI's main thread accumulating 15.389 seconds of runnable wait against 0.620 seconds of CPU time. Several Google services also timed out during boot, before the app started. This supports boot scheduling pressure, not an app ANR or an established emulator-version regression.
+
+The hosted functional suite now selects the official API 36 AOSP Automated Test Device image, which reduces unrelated preinstalled services and rendering work. The app has no Google Play services dependency. All 24 test cases and window-focus assertions remain enabled. ATD does not replace the full-image visual checks or physical-device performance acceptance; see [Android's ATD guidance](https://developer.android.com/studio/test/managed-devices#atd). Failure collection retains screenshots, the last ANR report, and system traces with bounded diagnostic commands. A passing full hosted run remains pending.
 
 ## Reproduce
 

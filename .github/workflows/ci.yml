@@ -70,6 +70,13 @@ jobs:
       - name: Install compile SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v6
+      - name: Reserve disk space for the emulator
+        run: |
+          # This Kotlin/Java project does not use the runner's preinstalled native toolchains.
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          df -h "$ANDROID_HOME"
+      - name: Build device test APKs before starting the emulator
+        run: ./scripts/verify-device.sh build
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -80,14 +87,15 @@ jobs:
         id: device-tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
+          # Keep the emulator runtime reproducible alongside the API/image selection.
+          emulator-build: '15917651'
           api-level: 36
-          target: google_apis
+          # ATD removes unrelated boot services; this app has no Google Play dependency.
+          target: aosp_atd
           arch: x86_64
           profile: pixel_6
-          # The profile default needs over 7 GB; this suite stores only small test fixtures.
-          disk-size: 2048M
           disable-animations: true
-          script: ./gradlew --no-parallel --stacktrace :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
+          script: ./scripts/verify-device.sh test
       - name: Summarize device tests
         if: always() && steps.device-tests.outcome != 'skipped'
         run: python scripts/summarize-tests.py --require-results
