@@ -1,0 +1,57 @@
+name: Prepare unsigned study bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      documentation_reviewed:
+        description: 'README, TODO, DESIGN and affected docs match this committed revision and release scope'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require documentation review before any artifact build
+        env:
+          DOCUMENTATION_REVIEWED: ${{ inputs.documentation_reviewed }}
+        run: |
+          test "$DOCUMENTATION_REVIEWED" = 'true' || { echo 'Review and commit the final documentation before preparing a release.'; exit 1; }
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate committed documentation and server
+        run: |
+          python scripts/verify-doc-links.py
+          python -m unittest discover -s server -v
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install compile SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify source before producing the unsigned bundle
+        run: |
+          chmod +x gradlew
+          ./gradlew --stacktrace :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest :app:lintDemoRelease
+      - name: Build unsigned demo bundle
+        run: ./gradlew --stacktrace :app:bundleDemoRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-demo-bundle-${{ github.sha }}
+          path: |
+            app/build/outputs/bundle/demoRelease/*.aab
+            app/build/outputs/mapping/demoRelease/
+          if-no-files-found: error
+          retention-days: 14
+      # No tag, release publication, signing key, or Play upload is performed.

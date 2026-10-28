@@ -1,0 +1,97 @@
+name: Verify Field Notes
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: android-actions/setup-android@v3
+      - name: Install compile SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate documentation and local service
+        run: |
+          python scripts/verify-doc-links.py
+          python -m unittest discover -s server -v
+      - name: Test, lint, and assemble development apps
+        run: |
+          chmod +x gradlew
+          ./gradlew --stacktrace :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest :app:lintDemoDebug :app:assembleDemoDebug :app:assembleLocalDebug
+      - name: Summarize host tests
+        if: always()
+        run: python scripts/summarize-tests.py --require-results
+      - name: Preserve reports and demo APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-verification
+          path: |
+            **/build/reports/
+            **/build/test-results/
+            app/build/outputs/apk/demo/debug/*.apk
+          retention-days: 14
+
+  device:
+    needs: host
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: android-actions/setup-android@v3
+      - name: Install compile SDK
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          chmod +x gradlew
+      - name: Room, Compose, and application journeys
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: ./gradlew --no-parallel --stacktrace :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
+      - name: Summarize device tests
+        if: always()
+        run: python scripts/summarize-tests.py --require-results
+      - name: Preserve device reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-verification-api-36
+          path: |
+            **/build/reports/androidTests/
+            **/build/outputs/androidTest-results/
+          retention-days: 14

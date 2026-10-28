@@ -1,0 +1,4 @@
+<resources>
+    <string name="sync_notification_title">Synchronization completed</string>
+    <string name="sync_notification_body">Saved observations were transferred. Open your journal for the latest status.</string>
+</resources>

@@ -1,0 +1,2 @@
+12 report files: tests=65, failures=0, errors=0, skipped=0
+Counts summarize reports currently on disk; clean/stale-report management belongs to the invoking build.

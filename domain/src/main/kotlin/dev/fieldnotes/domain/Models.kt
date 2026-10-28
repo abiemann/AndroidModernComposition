@@ -1,0 +1,75 @@
+package dev.fieldnotes.domain
+
+import kotlinx.coroutines.flow.Flow
+
+data class Project(val id: String, val name: String)
+
+enum class SyncState { PENDING, SYNCED, CONFLICT }
+
+data class Note(
+    val id: String,
+    val projectId: String,
+    val title: String,
+    val body: String,
+    val updatedAt: Long,
+    val revision: Long,
+    val syncState: SyncState,
+    val deleted: Boolean = false,
+)
+
+data class NoteDraft(val id: String? = null, val projectId: String, val title: String, val body: String)
+
+sealed interface SyncResult {
+    data class Success(val uploaded: Int, val conflicts: Int) : SyncResult
+    data object AuthenticationRequired : SyncResult
+    data object PermissionRequired : SyncResult
+    data object RetryableFailure : SyncResult
+    data object Rejected : SyncResult
+}
+
+interface NoteRepository {
+    fun observeNotes(): Flow<List<Note>>
+    fun observeNote(id: String): Flow<Note?>
+    fun observeProjects(): Flow<List<Project>>
+    suspend fun save(draft: NoteDraft): String
+    suspend fun delete(id: String)
+    suspend fun resolveConflict(id: String, keepLocal: Boolean)
+    suspend fun sync(): SyncResult
+}
+
+fun interface SyncScheduler { fun requestSync() }
+fun interface Clock { fun now(): Long }
+fun interface IdGenerator { fun next(): String }
+
+enum class AnalyticsEvent { NOTE_SAVED, SYNC_SUCCEEDED, SYNC_FAILED, JOURNAL_EXPOSED }
+interface Telemetry {
+    fun record(event: AnalyticsEvent)
+    suspend fun recordExposure(assignment: ExperimentAssignment) { record(AnalyticsEvent.JOURNAL_EXPOSED) }
+}
+
+data class Preferences(
+    val compactCards: Boolean = false,
+    val analyticsEnabled: Boolean = false,
+    val notificationsEnabled: Boolean = false,
+    val compactCardsExperiment: ExperimentAssignment = ExperimentAssignment(),
+)
+
+interface PreferencesRepository {
+    val preferences: Flow<Preferences>
+    suspend fun setCompactCards(enabled: Boolean)
+    suspend fun resetCompactCardsOverride()
+    suspend fun setAnalyticsEnabled(enabled: Boolean)
+    suspend fun setNotificationsEnabled(enabled: Boolean)
+}
+
+interface SessionRepository {
+    val signedIn: Flow<Boolean>
+    suspend fun signIn(token: String)
+    suspend fun signOut()
+}
+
+/** Only the network boundary sees the token; never expose it in UI state or logs. */
+interface TokenStore {
+    fun read(): String?
+    fun write(token: String?)
+}

@@ -1,0 +1,8 @@
+<resources>
+    <string name="legacy_title">The migration workshop</string>
+    <string name="legacy_description">This screen is Java and XML inside a Fragment. Rotate your device or leave and return to see lifecycle restoration. The Fragment releases its View references in onDestroyView. The main journal uses Kotlin and Compose.</string>
+    <string name="legacy_visits">Times this screen has resumed: %1$s</string>
+    <string name="legacy_import">Bundled XML observation: %1$s</string>
+    <string name="legacy_parse_error">The bundled observation could not be read.</string>
+    <string name="legacy_close">Return to journal</string>
+</resources>
