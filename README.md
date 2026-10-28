@@ -6,8 +6,8 @@ The primary stack is **Kotlin, Jetpack Compose, Material 3, MVVM with unidirecti
 
 ## Start here
 
-1. Open the repository root in Android Studio with support for Android Gradle Plugin 9.3.2.
-2. Select JDK 21 as the Gradle runtime. Gradle 9.5 also supports the locally used JDK 25; Java/Kotlin bytecode targets Java 17.
+1. Open the repository root in Android Studio with support for Android Gradle Plugin 9.4.1.
+2. Select JDK 21 as the Gradle runtime. Gradle 9.6 also supports the locally used JDK 25; Java/Kotlin bytecode targets Java 17.
 3. Install Android SDK Platform 37 (`platforms;android-37.0`) and Build Tools 36.0.0 or the compatible version selected by AGP. Set the SDK location through Android Studio or an untracked `local.properties` file.
 4. Select the `demoDebug` build variant and run on an emulator or device with Android 8.0/API 26 or later.
 
@@ -41,7 +41,7 @@ Read the [requirements map](docs/REQUIREMENTS.md), then follow the [study guide]
 
 ## Build and validate
 
-Use `./gradlew` on macOS/Linux and `./gradlew.bat` in Windows PowerShell. The wrapper pins Gradle 9.5.0. AGP 9.3.2 supplies built-in Kotlin 2.2.10 for Android modules; the JVM and Compose compiler plugins use the matching version. Do not add the old Kotlin Android plugin to these modules. The version catalog centralizes an intentionally compatible dependency set; lint may report newer versions. Evaluate upgrades together and rerun validation rather than treating these pins as the newest available releases.
+Use `./gradlew` on macOS/Linux and `./gradlew.bat` in Windows PowerShell. The wrapper pins Gradle 9.6.0. AGP 9.4.1 supplies built-in Kotlin 2.2.10 for Android modules; the JVM and Compose compiler plugins use the matching version. Do not add the old Kotlin Android plugin to these modules. The version catalog centralizes an intentionally compatible dependency set; lint may report newer versions. Evaluate upgrades together and rerun validation rather than treating these pins as the newest available releases.
 
 ```text
 ./gradlew :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest

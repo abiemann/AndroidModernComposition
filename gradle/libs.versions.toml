@@ -1,7 +1,7 @@
 # Android modules use AGP's built-in Kotlin. Keep the Compose compiler plugin
-# aligned with the Kotlin version bundled by AGP (2.2.10 for AGP 9.3.2).
+# aligned with the Kotlin version bundled by AGP (2.2.10 for AGP 9.4.1).
 [versions]
-agp = "9.3.2"
+agp = "9.4.1"
 kotlin = "2.2.10"
 ksp = "2.3.9"
 coroutines = "1.9.0"
