@@ -90,7 +90,8 @@ jobs:
           # Keep the emulator runtime reproducible alongside the API/image selection.
           emulator-build: '15917651'
           api-level: 36
-          target: google_apis
+          # ATD removes unrelated boot services; this app has no Google Play dependency.
+          target: aosp_atd
           arch: x86_64
           profile: pixel_6
           disable-animations: true

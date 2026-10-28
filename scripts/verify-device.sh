@@ -28,10 +28,10 @@ if (( test_status != 0 )); then
     diagnostics_dir='app/build/reports/androidTests/window-diagnostics'
     # Capture before the emulator shuts down; diagnostics must not mask test failure.
     if mkdir -p "$diagnostics_dir"; then
-        adb pull /sdcard/Download/fieldnotes-ci-window.png "$diagnostics_dir/" || true
-        if adb root; then
+        timeout 30s adb pull /sdcard/Download/fieldnotes-ci-window.png "$diagnostics_dir/" || true
+        if timeout 15s adb root; then
             if timeout 15s adb wait-for-device; then
-                adb pull /data/anr "$diagnostics_dir/anr" || true
+                timeout 30s adb pull /data/anr "$diagnostics_dir/anr" || true
             fi
         fi
     fi
