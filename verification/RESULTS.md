@@ -16,9 +16,13 @@ Executed October 27, 2026, America/Los_Angeles. UTC timestamps in generated JUni
 
 **83 distinct tests passed.** The device cases were repeated across two Android versions; repeats are not added to the distinct-case count. Hosted CI, API 26, physical-device performance, signed releases, and Play deployment remain unverified.
 
-## Reproduce
+## Hosted CI investigation
 
-The [initial hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40638966296) failed during Android SDK setup because `setup-android@v3` requested the retired `tools` package. No app tests ran in that attempt. The workflows now use v4; a successful full hosted run is still pending.
+The [initial hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40638966296) failed during Android SDK setup because `setup-android@v3` requested the retired `tools` package. No app tests ran in that attempt. The workflows now use v4.
+
+The [next main run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639357512) passed 40 JVM tests, 18 server tests, lint, and both debug assemblies. Its emulator could not start: the default data partition needed 7.2 GB but only 5.7 GB was free. CI now specifies a 2 GB test partition. A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test now awaits the intended resumed, focused window and explicitly selects its decor before Espresso assertions and Back, then awaits MainActivity focus on return. A full hosted rerun of these corrections is pending.
+
+## Reproduce
 
 Use the setup and commands in [README](../README.md). The final full debug check used:
 
@@ -40,7 +44,7 @@ Generated reports remain under each module's build/reports, build/test-results, 
 - Pending deletion tombstones had to remain observable for correct synchronization counts.
 - Server text limits needed to match Kotlin's UTF-16 units, including emoji.
 - The Python HTTP/1.0 server needed an explicit Connection: close response to prevent OkHttp reusing a closed socket when connection retries are intentionally disabled. Real Android-to-server testing caught this after isolated tests passed.
-- Cross-toolkit UI tests needed to await Compose's return after Android 17 back navigation, rather than assuming Espresso's back action completed the Activity transition synchronously.
+- Cross-toolkit UI tests needed to await the intended resumed, focused Activity in both directions and explicitly select the legacy window for Espresso. Compose idleness and Espresso actions do not guarantee that another Activity's window transition has completed.
 - Android 17's local-network permission required an explicit UI flow and a transport guard, retaining queued edits while access is denied.
 
 These corrections have regression coverage. The [study guide](../docs/STUDY_GUIDE.md) connects the cases to the implementation.
