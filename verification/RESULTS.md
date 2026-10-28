@@ -18,6 +18,8 @@ Executed October 27, 2026, America/Los_Angeles. UTC timestamps in generated JUni
 
 ## Reproduce
 
+The [initial hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40638966296) failed during Android SDK setup because `setup-android@v3` requested the retired `tools` package. No app tests ran in that attempt. The workflows now use v4; a successful full hosted run is still pending.
+
 Use the setup and commands in [README](../README.md). The final full debug check used:
 
 ```text
