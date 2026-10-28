@@ -35,7 +35,7 @@ The demo and local flavors are teaching environments. A real distribution needs 
 
 Use protected secrets/environments for signing and deployment. Never echo credentials, put them in Gradle source, or pass them in reusable command lines. Review and pin third-party action revisions in the organization's release policy; Dependabot is configured for Gradle and GitHub Actions updates. Review dependency/plugin updates as a compatible set, then rerun behavior and migration checks. The wrapper pins a Gradle distribution version; validate its checksum when changing it.
 
-The CI emulator uses an explicit 2 GB data partition for the small test fixtures. The Pixel profile's larger default can exhaust the hosted runner's disk after the SDK and Gradle caches are restored, preventing the emulator from starting. This partition setting does not change the app's minimum SDK or production storage behavior.
+The CI device job removes the hosted runner's preinstalled Android NDK toolchains, which this Kotlin/Java project does not use, to make room for the SDK image and emulator data partition. Reducing the configured partition size did not reduce this image's actual disk requirement. If native compilation is introduced, revise that cleanup and budget runner disk explicitly. On a window-readiness failure, the end-to-end test records device/window state and captures a screenshot; the device wrapper collects the screenshot before the emulator shuts down while preserving the failing test exit code.
 
 The local Maven publications teach JAR/AAR packaging without any external account. An actual private registry needs authenticated publishing, consumer access, immutable version policy, source/license metadata, and credential rotation.
 

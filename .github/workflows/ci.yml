@@ -70,6 +70,11 @@ jobs:
       - name: Install compile SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Reserve disk space for the emulator
+        run: |
+          # This Kotlin/Java project does not use the runner's preinstalled native toolchains.
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          df -h "$ANDROID_HOME"
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -84,10 +89,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          # The profile default needs over 7 GB; this suite stores only small test fixtures.
-          disk-size: 2048M
           disable-animations: true
-          script: ./gradlew --no-parallel --stacktrace :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
+          script: ./scripts/verify-device.sh
       - name: Summarize device tests
         if: always() && steps.device-tests.outcome != 'skipped'
         run: python scripts/summarize-tests.py --require-results

@@ -2,7 +2,9 @@ package dev.fieldnotes
 
 import android.app.Activity
 import android.app.KeyguardManager
+import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.util.Log
 import android.view.View
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -106,9 +108,35 @@ class JournalEndToEndTest {
                 focusedDecor != null
             }
         } catch (timeout: ComposeTimeoutException) {
+            captureWindowDiagnostics()
             throw AssertionError("Activity window did not become ready. Last state: $lastSnapshot", timeout)
         }
         return checkNotNull(focusedDecor)
+    }
+
+    private fun captureWindowDiagnostics() {
+        val tag = "FieldNotesWindow"
+        listOf(
+            "mkdir -p /sdcard/Download",
+            "screencap -p /sdcard/Download/fieldnotes-ci-window.png",
+            "dumpsys window displays",
+            "dumpsys input",
+            "dumpsys activity activities",
+        ).forEach { command ->
+            runCatching {
+                Log.e(tag, "Window timeout diagnostic: $command")
+                val output = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+                // Drain to EOF before closing, including commands that only write a file.
+                ParcelFileDescriptor.AutoCloseInputStream(output).bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        line.chunked(1_000).forEach { chunk -> Log.e(tag, chunk) }
+                    }
+                }
+            }.onFailure { failure ->
+                // Diagnostic failures must not hide the original window timeout.
+                Log.w(tag, "Could not capture diagnostic: $command", failure)
+            }
+        }
     }
 
     private fun waitForText(text: String) {
