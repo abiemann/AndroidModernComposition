@@ -122,6 +122,7 @@ class JournalEndToEndTest {
             "dumpsys window displays",
             "dumpsys input",
             "dumpsys activity activities",
+            "dumpsys activity lastanr",
         ).forEach { command ->
             runCatching {
                 Log.e(tag, "Window timeout diagnostic: $command")

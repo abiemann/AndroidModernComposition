@@ -26,7 +26,7 @@ A [parallel update run](https://github.com/abiemann/AndroidModernComposition/act
 
 The [captured hosted failure](https://github.com/abiemann/AndroidModernComposition/actions/runs/40648093705) identified the focus owner: a **System UI ANR dialog**, above the app before any journal interaction. WindowManager and InputDispatcher agreed, and the app's input connection was responsive. The [screenshot](ci-system-ui-anr.png) records the evidence. Compose semantic actions can run behind another window, which is why the real-window preconditions and Espresso checks remain essential. A deliberately sleeping local test device also verified that the diagnostic path preserves failure, reports the device state, and captures its screenshot; the normal suite passed again after waking it.
 
-CI now builds the test APKs before starting the emulator, limits Gradle memory/workers, and uses an in-process Kotlin compiler with a single-use Gradle process. This reduces resource contention during emulator startup. The full hosted rerun remains pending; local success is not being substituted for it.
+CI now builds the test APKs before starting the emulator, limits Gradle memory/workers, and uses an in-process Kotlin compiler with a single-use Gradle process. The [resource-bounded run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40651241577) still captured the System UI ANR, so resource contention is not an established cause. The next controlled comparison pins emulator 37.1.11 (build 15917651), the runtime that passed locally, while retaining API 36 and all assertions. Failure collection also retrieves the last ANR report and system ANR traces when the test emulator permits root access. A passing full hosted run remains pending.
 
 ## Reproduce
 
