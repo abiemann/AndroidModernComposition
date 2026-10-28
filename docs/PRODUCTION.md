@@ -31,7 +31,7 @@ The demo and local flavors are teaching environments. A real distribution needs 
 
 ## CI and supply chain
 
-[CI](../.github/workflows/ci.yml) checks Python HTTP behavior, local documentation targets, JVM tests, Android lint/assemblies, and an API 36 emulator suite. Configure the intended repository, branch protection, required checks, and contribution policy before claiming protected delivery. Hosted workflows have not run merely because their YAML exists.
+[CI](../.github/workflows/ci.yml) checks Python HTTP behavior, local documentation targets, JVM tests, Android lint/assemblies, and an API 36 emulator suite. It runs on pushes to `main`, pull requests, and manual dispatch; branch pushes do not duplicate pull request runs. Android setup uses v4 because v3's default installation requests the retired SDK `tools` package. Test summaries run only when the corresponding test step was attempted, so an SDK setup failure does not also produce a misleading missing-report failure. Configure branch protection, required checks, and contribution policy before claiming protected delivery. Hosted execution evidence is recorded in [verification results](../verification/RESULTS.md).
 
 Use protected secrets/environments for signing and deployment. Never echo credentials, put them in Gradle source, or pass them in reusable command lines. Review and pin third-party action revisions in the organization's release policy; Dependabot is configured for Gradle and GitHub Actions updates. Review dependency/plugin updates as a compatible set, then rerun behavior and migration checks. The wrapper pins a Gradle distribution version; validate its checksum when changing it.
 
