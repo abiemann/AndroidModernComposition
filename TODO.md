@@ -12,28 +12,38 @@ This file separates implementation from evidence. A checked implementation item 
 - [x] DataStore preferences, Keystore-backed token encryption, restricted cleartext development host, and backup restriction.
 - [x] Java/XML Activity/Fragment lifecycle lab; JVM JAR and Android AAR Maven publication definitions.
 - [x] Local opt-in event counters/crash-type capture, stable control/compact-card experiment allocation, and resettable user override excluded from arm-level metrics.
-- [x] Unit, HTTP, database/migration, Compose, and application test sources; macrobenchmark/profile-generation sources.
+- [x] JVM method-level tests; optional non-UI HTTP, database/migration, worker, and credential integration tests; manual macrobenchmark/profile-generation sources.
 - [x] CI workflow, manual unsigned-bundle workflow, requirements map, study exercises, and production runbook.
 
-## Executed verification
+## Current testing scope
+
+Routine CI runs JVM method-level tests, lint, development APK builds, and the documentation link check. Method tests cover domain policy, ViewModel actions/state, Java formatting, worker policy, and local telemetry. HTTP MockWebServer and DataStore boundary checks also run on the JVM; the suite is not entirely pure isolated unit tests.
+
+Functional Compose and whole-app UI tests have been removed. The remaining 18 non-UI Android checks (14 data and 4 app), one real Android-to-server integration check, and 18 Python HTTP tests are optional manual exercises. The explicitly dispatched release workflow also runs the Python suite. No emulator or Python server integration runs in routine CI. Benchmark/profile generation remains a separate manual performance exercise.
+
+Verified locally October 30, 2026 with JDK 21.0.13: **43 JVM method tests passed**, with zero failures, errors, or skips. Demo debug lint and both development APK builds passed. The optional non-UI integration test APKs compile; device/server integration tests were not rerun for this scope change. Workflow syntax and 64 local documentation links pass. The revised CI configuration has not yet been run on GitHub. See [current verification](verification/RESULTS.md#current-test-policy-october-30-2026).
+
+## Historical executed verification (October 27–28, 2026)
+
+These results describe the suite before the testing-scope change. Six UI tests in the recorded totals no longer exist; current checks and counts are recorded separately in [verification results](verification/RESULTS.md).
 
 | Check | Result |
 | --- | --- |
 | Python local server tests | **Passed: 18 tests**, real HTTP sockets + SQLite, Python 3.13 on Windows. Covers auth, UTF-16 validation, stale/concurrent writes, replay/reopen, tombstones, and explicit HTTP connection framing. |
-| Android host unit tests | **Passed: 40 tests** across domain, data, feature, legacy, and app (including Robolectric consent/metrics). |
+| Android host method tests | **Passed: 40 tests** across domain, data, feature, legacy, and app (including HTTP/DataStore boundaries and Robolectric consent/metrics). |
 | Android lint and APK assembly | **Passed:** demoDebug/localDebug APKs; app lint for both flavors plus data/feature/legacy debug lint. Remaining lint warnings are dependency/toolchain update suggestions for the pinned compatible set. |
 | Room migration/device tests | **Passed: 14 tests** on API 36.1 and 37, including migration, preferences persistence, sync races, pending deletion, and local-network permission/recovery. |
-| Compose/device/end-to-end tests | **Passed:** 5 Compose tests + 5 app tests on API 36.1 and 37, including create/recreate/edit/search/legacy/delete, Keystore tamper/atomic recovery, and worker outcomes. |
+| Former UI/device suite | **Passed at the time:** 5 Compose tests + 5 app tests on API 36.1 and 37. The 5 Compose tests and 1 whole-app journey were later removed; the 4 non-UI Keystore/worker tests remain optional. |
 | Real Android-to-Python HTTP | **Passed: 1 journey** on API 36.1 and 37, covering authenticated snapshot, locally pending create, upload, project/body edit, and deletion through Retrofit and SQLite. The runner cleans its temporary credentials/server/database. |
 | Local Markdown target check | **Passed:** local file/directory targets resolve. External URLs and heading anchors are not covered by this script. |
-| Hosted GitHub Actions | **Passed: 40 JVM + 18 server + 24 device tests**, lint, and both debug assemblies. No failures, errors, or skips. Functional device CI uses API 36 AOSP ATD; the full Google APIs image also passed all 24 tests locally. See [evidence and image scope](verification/RESULTS.md#hosted-ci-investigation). |
+| Former hosted GitHub Actions scope | **Passed: 40 JVM + 18 server + 24 device tests**, lint, and both debug assemblies. No failures, errors, or skips. Device CI then used API 36 AOSP ATD; the full Google APIs image also passed all 24 tests locally. Routine CI now runs only the host checks described above. See [historical evidence and image scope](verification/RESULTS.md#hosted-ci-investigation). |
 | Macrobenchmark/profile generation | Gradle task graph resolves in dry-run. Release-derived artifacts and benchmark sources were not built/run; no profile or physical-device timing generated. |
 
 ## Further acceptance work
 
-- [x] Run the device suite on Android 16/API 36.1 and current target Android 17/API 37.
-- [x] Run all 24 functional device tests on API 36 Google APIs locally and API 36 AOSP ATD in hosted CI.
-- [ ] Run the device suite on minimum API 26.
+- [x] Historically ran the former device suite on Android 16/API 36.1 and current target Android 17/API 37.
+- [x] Historically ran all 24 former device tests on API 36 Google APIs locally and API 36 AOSP ATD in hosted CI.
+- [ ] Run the optional non-UI device suite on minimum API 26.
 - [x] Visually inspect the journal at normal and 200% font size and in a tablet-sized dark window. This is a bounded layout review, not comprehensive accessibility certification.
 - [ ] Complete manual TalkBack, all screens at large fonts, foldables, RTL, keyboard/switch access, and notification denial/settings revocation review on real devices.
 - [ ] Exercise two local clients against the Python server, including simultaneous edits, disconnected deletion, token invalidation, and process termination during upload.

@@ -59,16 +59,42 @@ class ViewModelTest {
         assertEquals(1, schedules)
     }
 
-    @Test fun `restored draft wins over older database value`() = runTest(dispatcher) {
+    @Test fun `editing an existing note preserves its identity`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("existing-note", "Original", "field"))
+        val vm = editor(SavedStateHandle(mapOf("noteId" to "existing-note")))
+        runCurrent()
+        assertTrue(vm.state.value.editing)
+        assertEquals("Original", vm.state.value.title)
+        vm.title("Revised observation")
+        vm.body("Additional details")
+        vm.project("study")
+        vm.save()
+        runCurrent()
+        assertEquals(NoteDraft("existing-note", "study", "Revised observation", "Additional details"),
+            repository.lastDraft)
+        assertEquals("existing-note", vm.state.value.savedId)
+        assertEquals(1, repository.saves)
+        assertEquals(1, schedules)
+    }
+
+    @Test fun `draft written by setters survives restoration over older database values`() = runTest(dispatcher) {
         repository.notes.value = listOf(note("a", "Original", "field"))
-        val handle = SavedStateHandle(mapOf("noteId" to "a", "initialized" to true,
-            "title" to "In progress", "body" to "Do not lose this", "projectId" to "study"))
+        val handle = SavedStateHandle(mapOf("noteId" to "a"))
         val vm = editor(handle)
         runCurrent()
-        assertEquals("In progress", vm.state.value.title)
-        assertEquals("Do not lose this", vm.state.value.body)
-        assertEquals("study", vm.state.value.projectId)
-        assertFalse(vm.state.value.loading)
+        vm.title("In progress")
+        vm.body("Do not lose this")
+        vm.project("study")
+
+        val restoredHandle = SavedStateHandle(handle.keys().associateWith { handle.get<Any?>(it) })
+        val restored = editor(restoredHandle)
+        runCurrent()
+        assertEquals("In progress", restored.state.value.title)
+        assertEquals("Do not lose this", restored.state.value.body)
+        assertEquals("study", restored.state.value.projectId)
+        assertTrue(restored.state.value.editing)
+        assertFalse(restored.state.value.loading)
+        assertEquals(0, repository.saves)
     }
 
     @Test fun `save failure keeps fields and allows retry`() = runTest(dispatcher) {
@@ -120,6 +146,28 @@ class ViewModelTest {
         assertEquals(Feedback.OFFLINE, vm.feedback.value)
         assertEquals(1, schedules)
         assertFalse(vm.syncing.value)
+    }
+
+    @Test fun `deleting a note forwards its identity and schedules sync after success`() = runTest(dispatcher) {
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.delete("note-to-delete")
+        runCurrent()
+        assertEquals("note-to-delete", repository.lastDeleteId)
+        assertEquals(1, schedules)
+        assertEquals(Feedback.DELETED, vm.feedback.value)
+    }
+
+    @Test fun `failed deletion reports failure without scheduling or announcing deletion`() = runTest(dispatcher) {
+        repository.failDelete = true
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        val feedback = mutableListOf<Feedback?>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.feedback.toList(feedback) }
+        vm.delete("note-to-keep")
+        runCurrent()
+        assertEquals("note-to-keep", repository.lastDeleteId)
+        assertEquals(0, schedules)
+        assertEquals(Feedback.FAILED, vm.feedback.value)
+        assertFalse(feedback.contains(Feedback.DELETED))
     }
 
     @Test fun `tombstone conflicts remain visible for resolution`() = runTest(dispatcher) {
@@ -200,7 +248,9 @@ private class FakeNotes : NoteRepository {
     var saves = 0
     var failSave = false
     var failRead = false
+    var failDelete = false
     var lastDraft: NoteDraft? = null
+    var lastDeleteId: String? = null
     var syncResult: SyncResult = SyncResult.Success(0, 0)
     override fun observeNotes(): Flow<List<Note>> = flow {
         if (failRead) error("read unavailable")
@@ -212,9 +262,12 @@ private class FakeNotes : NoteRepository {
         if (failSave) error("storage unavailable")
         saves++
         lastDraft = draft
-        return "note-1"
+        return draft.id ?: "note-1"
     }
-    override suspend fun delete(id: String) = Unit
+    override suspend fun delete(id: String) {
+        lastDeleteId = id
+        if (failDelete) error("storage unavailable")
+    }
     override suspend fun resolveConflict(id: String, keepLocal: Boolean) = Unit
     override suspend fun sync(): SyncResult = syncResult
 }

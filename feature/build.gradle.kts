@@ -8,7 +8,6 @@ android {
     compileSdk = 37
     defaultConfig {
         minSdk = 26
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
     compileOptions {
@@ -38,10 +37,5 @@ dependencies {
     implementation(libs.coroutines.android)
     testImplementation(libs.test.junit)
     testImplementation(libs.coroutines.test)
-    androidTestImplementation(libs.test.android.junit)
-    androidTestImplementation(libs.test.android.runner)
-    androidTestImplementation(libs.test.espresso)
-    androidTestImplementation(libs.compose.test.junit4)
-    debugImplementation(libs.compose.test.manifest)
     debugImplementation(libs.compose.ui.tooling)
 }

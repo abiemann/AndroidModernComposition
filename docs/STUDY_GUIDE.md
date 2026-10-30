@@ -1,6 +1,6 @@
 # Study guide
 
-Work through observable behavior first, then trace the code and change one boundary at a time. Use synthetic observations; this app has explicit [privacy and production limits](PRODUCTION.md).
+Work through observable behavior first, then trace the code and change one boundary at a time. The screen interactions below are manual study exercises. Automated testing focuses on method calls and resulting state, with no functional UI tests. Use synthetic observations; this app has explicit [privacy and production limits](PRODUCTION.md).
 
 ## 1. Trace one saved observation
 
@@ -24,7 +24,7 @@ On Android 17/API 37+, also use Settings → **Allow local network access** for 
 
 The Settings connection label means a credential has been stored locally. The next authenticated request determines whether the server accepts it. Stop the server to observe retryable failure; use an incorrect token to observe authentication-required handling. Neither condition should erase the local note. Restore the token and explicitly schedule synchronization.
 
-The Windows [`verify-local-server.ps1`](../scripts/verify-local-server.ps1) helper automates a separate real-HTTP integration journey with an isolated Room database, an isolated server database, and a fresh short-lived token. Start an emulator, then run it with `-PythonExecutable` pointing to a real Python executable. It checks both process ownership of the listening port and an authenticated empty snapshot before invoking only `dev.fieldnotes.LocalServerIntegrationTest`. It never attaches to an existing service. This is additional evidence beyond a MockWebServer contract test; it does not imply a deployed backend.
+The optional Windows [`verify-local-server.ps1`](../scripts/verify-local-server.ps1) helper runs a real-HTTP repository integration check with an isolated Room database, an isolated server database, and a fresh short-lived token. It does not drive screens or run in routine CI. Start an emulator, then run it with `-PythonExecutable` pointing to a real Python executable. It checks both process ownership of the listening port and an authenticated empty snapshot before invoking only `dev.fieldnotes.LocalServerIntegrationTest`. It never attaches to an existing service. This is additional evidence beyond a MockWebServer contract test; it does not imply a deployed backend.
 
 WorkManager may defer execution because of constraints, backoff, Doze, or system scheduling. “Enqueued” is not “finished.” Inspect work with Android Studio's Background Task Inspector. Explain why the UI's Save result reports a durable local write rather than promising immediate remote delivery.
 
@@ -44,25 +44,27 @@ Try portrait/landscape, a narrow split-screen window, a tablet-width window, lig
 
 Enable notification feedback, deny permission, then grant it through the supported user flow. Revoke permission in system settings and sync again: the worker must recheck permission and avoid crashing. Permission state and the user's preference are separate facts. A stored preference does not grant a platform permission.
 
-Use Compose tests for semantics and interaction, then inspect real rendering manually. The application journey switches to Espresso assertions for the Java/XML Activity, showing how the two toolkits coexist. A test that only asserts a composable's existence cannot prove clipping, contrast, touch reachability, or screen-reader order.
+Inspect both Compose screens and the Java/XML Activity manually. The automated suite tests ViewModel actions and state through methods; it does not navigate screens or assert UI elements. Review clipping, contrast, touch reachability, and screen-reader order on representative devices.
 
 ## Test ladder
 
-| Level | What the test should establish | Where |
+| Level | What the test should establish | Where / execution |
 | --- | --- | --- |
-| Domain unit | Invalid notes never reach persistence; normalization is consistent; successful save requests sync. | `domain/src/test` |
-| ViewModel unit | Actions produce expected state, restored drafts survive initialization, duplicate submissions are guarded, cancellation is preserved. | `feature/src/test` |
-| HTTP contract | Correct authorization and mutation payloads; status/error mapping; invalid responses/redirects rejected. | `data/src/test` |
-| Database integration | Atomic note/outbox writes, conflicts, races, tombstones, and migration preservation. | `data/src/androidTest` |
-| Compose UI | User-visible semantics, validation, actions, and navigation. | `feature/src/androidTest` |
-| Platform/application | Robolectric consent/telemetry checks, worker/security behavior, and whole-app Compose/Espresso journeys with real composition. | `app/src/test`, `app/src/androidTest` |
-| Server integration | Actual request parsing, authentication, SQLite atomicity, persistence and replay. | `server/test_server.py` |
+| Domain unit | Invalid notes never reach persistence; normalization is consistent; successful save requests sync. | `domain/src/test`; routine CI |
+| ViewModel unit | Method calls produce expected state, editor setters preserve restorable drafts, edits retain identity, delete outcomes are handled, cancellation is preserved. | `feature/src/test`; routine CI |
+| HTTP and preference boundaries | Correct authorization/mutation payloads, status/error mapping, invalid responses/redirects rejected, stable experiment assignment and preference persistence. Uses MockWebServer and DataStore rather than entirely isolated fakes. | `data/src/test`; routine CI |
+| Java formatter unit | Existing Java formatting behavior is callable and testable independently of the Activity. | `legacy/src/test`; routine CI |
+| Platform policy and telemetry | Worker outcome policy and Robolectric consent/local-metric behavior. | `app/src/test`; routine CI |
+| Database/platform integration | Atomic note/outbox writes, conflicts, races, tombstones, migration preservation, preferences and permission gating. | `data/src/androidTest`; optional manual device run |
+| Credential/worker integration | Keystore tamper/atomic recovery and injected WorkManager outcomes. | `app/src/androidTest`; optional manual device run |
+| Android-to-server integration | Repository create/edit/delete and replay through Retrofit, Python, and SQLite without screen interaction. | `app/src/androidTestLocal`; optional manual helper |
+| Server integration | Actual request parsing, authentication, SQLite atomicity, persistence and replay. | `server/test_server.py`; manual command or explicitly dispatched release workflow |
 
-Run commands from [README](../README.md). Use `--no-parallel` for suites sharing one emulator so test apps do not compete for the foreground window. Test execution evidence belongs in [TODO](../TODO.md) or CI reports. Fakes should model meaningful behavior; mocks are useful for narrow interactions but can hide transaction/race defects if every call is scripted to succeed.
+Run commands from [README](../README.md). Routine CI requires no emulator or Python server. Optional device checks run sequentially with `--no-parallel`. Test execution evidence belongs in [TODO](../TODO.md) or CI reports. Fakes should model meaningful behavior; mocks are useful for narrow interactions but can hide transaction/race defects if every call is scripted to succeed.
 
 ## Performance exercise
 
-Use a representative **physical** device with a consistent thermal/battery state. The `benchmark` variant is minified, release-like, profileable, and debug-signed for local timing. The separate `profile` variant is unminified so generated rules refer to unobfuscated classes and methods. Before building a release-derived variant, reconcile and commit the documentation as described in the release procedure.
+This is an optional manual performance exercise, separate from functional testing and routine CI. Use a representative **physical** device with a consistent thermal/battery state. The `benchmark` variant is minified, release-like, profileable, and debug-signed for local timing. The separate `profile` variant is unminified so generated rules refer to unobfuscated classes and methods. Before building a release-derived variant, reconcile and commit the documentation as described in the release procedure.
 
 ```text
 ./gradlew :benchmark:connectedBenchmarkAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.fieldnotes.benchmark.StartupBenchmark

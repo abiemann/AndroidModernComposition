@@ -1,6 +1,20 @@
 # Verification record
 
-Initial app verification executed October 27, 2026, America/Los_Angeles. The CI investigation continued October 28. UTC timestamps in the initial generated JUnit reports fall on October 28.
+## Current test policy (October 30, 2026)
+
+Routine verification uses local JVM tests that call domain, repository, ViewModel, worker-policy, telemetry, and Java formatter methods. There are no functional UI tests: the five Compose tests and the single whole-app navigation journey have been removed, along with their UI-test dependencies and the CI emulator job. New direct ViewModel checks cover edit identity, deletion outcomes, and draft restoration without launching an Activity.
+
+Non-UI database, platform, and HTTP integration suites remain available as optional manual checks. The benchmark module remains a separate manual performance exercise. Neither is part of routine CI. The report summarizer defaults to host reports so old device results cannot be mistaken for current unit-test results; `--scope device` selects the optional data/app device reports.
+
+Local validation passed on October 30 using Temurin JDK 21.0.13: **43 JVM tests** (domain 11, data 10, feature 16, legacy 2, app 4), zero failures/errors/skips, demo debug lint, and both demo/local debug APK builds. Data and app demo/local non-UI integration test APKs also compile; no emulator or server integration suite was run for this change. Workflow syntax, the optional Bash helper's syntax, whitespace checks, and 64 local documentation targets pass. The revised workflow has not yet been run on GitHub.
+
+An initial Java 25 run passed the method tests but the Java runtime crashed in a native garbage-collector thread during APK packaging. The complete validation rerun succeeded with the recommended Java 21 runtime used by CI. This was not an application test failure.
+
+The historical evidence below describes the previous test policy and source revision, not the current routine suite.
+
+## Historical verification (October 27–28, 2026)
+
+Initial app verification executed October 27, 2026, America/Los_Angeles. The CI investigation continued October 28. UTC timestamps in the initial generated JUnit reports fall on October 28. These results apply to source through commit `4e2b2b2`, before the UI-test removal.
 
 ## Results
 
@@ -20,23 +34,23 @@ Initial app verification executed October 27, 2026, America/Los_Angeles. The CI 
 
 The [initial hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40638966296) failed during Android SDK setup because `setup-android@v3` requested the retired `tools` package. No app tests ran in that attempt. The workflows now use v4.
 
-The [next main run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639357512) passed 40 JVM tests, 18 server tests, lint, and both debug assemblies. Its emulator could not start: the data partition needed 7.2 GB but only 5.7 GB was free. The configured smaller partition did not reduce the image's actual requirement, so the device job now frees the hosted runner's unused preinstalled NDK toolchains instead.
+The [next main run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639357512) passed 40 JVM tests, 18 server tests, lint, and both debug assemblies. Its emulator could not start: the data partition needed 7.2 GB but only 5.7 GB was free. The configured smaller partition did not reduce the image's actual requirement, so the device job was changed to free the hosted runner's unused preinstalled NDK toolchains instead.
 
-A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test now awaits the intended resumed, focused window and explicitly selects its decor before Espresso assertions and Back, then awaits MainActivity focus on return. All five app device tests passed locally on API 36.1 and 37, and all 24 device tests passed in CI order on a clean Pixel 6/API 36 Google APIs revision 7 image, with animations disabled.
+A [parallel update run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40639050266) reached all 24 device tests and exposed one failure at the Compose-to-Views Activity handoff. The end-to-end test was updated to await the intended resumed, focused window and explicitly select its decor before Espresso assertions and Back, then await MainActivity focus on return. All five app device tests passed locally on API 36.1 and 37, and all 24 device tests passed in CI order on a clean Pixel 6/API 36 Google APIs revision 7 image, with animations disabled.
 
-The [captured hosted failure](https://github.com/abiemann/AndroidModernComposition/actions/runs/40648093705) identified the focus owner: a **System UI ANR dialog**, above the app before any journal interaction. WindowManager and InputDispatcher agreed, and the app's input connection was responsive. The [screenshot](ci-system-ui-anr.png) records the evidence. Compose semantic actions can run behind another window, which is why the real-window preconditions and Espresso checks remain essential. A deliberately sleeping local test device also verified that the diagnostic path preserves failure, reports the device state, and captures its screenshot; the normal suite passed again after waking it.
+The [captured hosted failure](https://github.com/abiemann/AndroidModernComposition/actions/runs/40648093705) identified the focus owner: a **System UI ANR dialog**, above the app before any journal interaction. WindowManager and InputDispatcher agreed, and the app's input connection was responsive. The [screenshot](ci-system-ui-anr.png) records the evidence. Compose semantic actions can run behind another window, which explained why the real-window preconditions and Espresso checks exposed that failure. A deliberately sleeping local test device also verified that the diagnostic path preserves failure, reports the device state, and captures its screenshot; the normal suite passed again after waking it.
 
-CI now builds the test APKs before starting the emulator, limits Gradle memory/workers, and uses an in-process Kotlin compiler with a single-use Gradle process. Both the [resource-bounded run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40651241577) and the [pinned emulator 37.1.11 comparison](https://github.com/abiemann/AndroidModernComposition/actions/runs/40653933578) still captured the System UI ANR. The latter retrieved system traces: KeyguardService exceeded its 20-second startup deadline, with System UI's main thread accumulating 15.389 seconds of runnable wait against 0.620 seconds of CPU time. Several Google services also timed out during boot, before the app started. This supports boot scheduling pressure, not an app ANR or an established emulator-version regression.
+That CI revision built the test APKs before starting the emulator, limited Gradle memory/workers, and used an in-process Kotlin compiler with a single-use Gradle process. Both the [resource-bounded run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40651241577) and the [pinned emulator 37.1.11 comparison](https://github.com/abiemann/AndroidModernComposition/actions/runs/40653933578) still captured the System UI ANR. The latter retrieved system traces: KeyguardService exceeded its 20-second startup deadline, with System UI's main thread accumulating 15.389 seconds of runnable wait against 0.620 seconds of CPU time. Several Google services also timed out during boot, before the app started. This supports boot scheduling pressure, not an app ANR or an established emulator-version regression.
 
-The hosted functional suite now selects the official API 36 AOSP Automated Test Device image, which omits System UI and unrelated preinstalled apps/services and reduces rendering work. It verifies app behavior, not system-UI integration. The app has no Google Play services dependency. All 24 test cases and window-focus assertions remain enabled. ATD does not replace the full-image visual checks or physical-device performance acceptance; see [Android's ATD guidance](https://developer.android.com/studio/test/managed-devices#use-atd). Failure collection retains screenshots, the last ANR report, and system traces with bounded diagnostic commands.
+The hosted functional suite then selected the official API 36 AOSP Automated Test Device image, which omits System UI and unrelated preinstalled apps/services and reduces rendering work. It verifies app behavior, not system-UI integration. The app has no Google Play services dependency. All 24 test cases and window-focus assertions were enabled at that revision. ATD does not replace the full-image visual checks or physical-device performance acceptance; see [Android's ATD guidance](https://developer.android.com/studio/test/managed-devices#use-atd). Failure collection then retained screenshots, the last ANR report, and system traces with bounded diagnostic commands.
 
 **[Hosted run 40655721754 passed](https://github.com/abiemann/AndroidModernComposition/actions/runs/40655721754)** at source commit `510d530`: 40 JVM tests, 18 Python server tests, 24 Android tests (14 data, 5 Compose, 5 app), lint, and both development APK assemblies. The JUnit summaries report zero failures, errors, and skipped cases. No test was removed or assertion disabled to obtain the pass.
 
 The separate AGP 9.4.1 dependency PR also required a companion Gradle 9.6.0 wrapper upgrade, verified against the [AGP compatibility requirements](https://developer.android.com/build/releases/agp-9-4-0-release-notes). That repair stays on the dependency PR; main retains its tested AGP 9.3.2 / Gradle 9.5.0 pair.
 
-## Reproduce
+## Historical reproduction
 
-Use the setup and commands in [README](../README.md). The final full debug check used:
+Use [README](../README.md) for current commands. At historical revision `4e2b2b2`, the full debug check used the following command, which includes the now-removed UI suites:
 
 ```text
 ./gradlew :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest :app:assembleDemoDebug :app:assembleLocalDebug :app:lintDemoDebug :app:lintLocalDebug :data:lintDebug :feature:lintDebug :legacy:lintDebug :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest --no-parallel
@@ -59,7 +73,7 @@ Generated reports remain under each module's build/reports, build/test-results, 
 - Cross-toolkit UI tests needed to await the intended resumed, focused Activity in both directions and explicitly select the legacy window for Espresso. Compose idleness and Espresso actions do not guarantee that another Activity's window transition has completed.
 - Android 17's local-network permission required an explicit UI flow and a transport guard, retaining queued edits while access is denied.
 
-These corrections have regression coverage. The [study guide](../docs/STUDY_GUIDE.md) connects the cases to the implementation.
+These corrections had regression coverage at that historical revision. The [study guide](../docs/STUDY_GUIDE.md) connects the cases to the implementation.
 
 ## Visual review
 

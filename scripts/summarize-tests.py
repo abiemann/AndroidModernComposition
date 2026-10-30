@@ -1,4 +1,4 @@
-"""Summarize existing Gradle JUnit reports; never treat absent reports as a pass."""
+"""Summarize JVM method tests by default, or optional non-UI device reports."""
 
 import argparse
 from pathlib import Path
@@ -11,11 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-results", action="store_true")
+    parser.add_argument("--scope", choices=("host", "device"), default="host")
     arguments = parser.parse_args()
     files = set()
-    for module in ("domain", "data", "feature", "legacy", "app", "benchmark"):
-        for directory in ("test-results", "outputs/androidTest-results"):
-            files.update((ROOT / module / "build" / directory).rglob("TEST-*.xml"))
+    modules = ("domain", "data", "feature", "legacy", "app") if arguments.scope == "host" else ("data", "app")
+    directory = "test-results" if arguments.scope == "host" else "outputs/androidTest-results"
+    for module in modules:
+        files.update((ROOT / module / "build" / directory).rglob("TEST-*.xml"))
     if not files:
         print("No Gradle JUnit XML reports found; no test pass is inferred.")
         return 1 if arguments.require_results else 0

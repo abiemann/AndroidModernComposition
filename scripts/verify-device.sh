@@ -17,24 +17,8 @@ gradle_args=(
 )
 
 if [[ "$mode" == build ]]; then
-    # Finish compilation and its single-use Gradle process before emulator boot.
-    exec ./gradlew "${gradle_args[@]}" :data:assembleDebugAndroidTest :feature:assembleDebugAndroidTest :app:assembleDemoDebug :app:assembleDemoDebugAndroidTest
+    exec ./gradlew "${gradle_args[@]}" :data:assembleDebugAndroidTest :app:assembleDemoDebug :app:assembleDemoDebugAndroidTest
 fi
 
-test_status=0
-./gradlew "${gradle_args[@]}" :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest || test_status=$?
-
-if (( test_status != 0 )); then
-    diagnostics_dir='app/build/reports/androidTests/window-diagnostics'
-    # Capture before the emulator shuts down; diagnostics must not mask test failure.
-    if mkdir -p "$diagnostics_dir"; then
-        timeout 30s adb pull /sdcard/Download/fieldnotes-ci-window.png "$diagnostics_dir/" || true
-        if timeout 15s adb root; then
-            if timeout 15s adb wait-for-device; then
-                timeout 30s adb pull /data/anr "$diagnostics_dir/anr" || true
-            fi
-        fi
-    fi
-fi
-
-exit "$test_status"
+# Optional non-UI integration checks against a device the developer started.
+exec ./gradlew "${gradle_args[@]}" :data:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest

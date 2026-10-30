@@ -7,7 +7,7 @@ The primary stack is **Kotlin, Jetpack Compose, Material 3, MVVM with unidirecti
 ## Start here
 
 1. Open the repository root in Android Studio with support for Android Gradle Plugin 9.3.2.
-2. Select JDK 21 as the Gradle runtime. Gradle 9.5 also supports the locally used JDK 25; Java/Kotlin bytecode targets Java 17.
+2. Select JDK 21 as the Gradle runtime to match CI; Java/Kotlin bytecode targets Java 17.
 3. Install Android SDK Platform 37 (`platforms;android-37.0`) and Build Tools 36.0.0 or the compatible version selected by AGP. Set the SDK location through Android Studio or an untracked `local.properties` file.
 4. Select the `demoDebug` build variant and run on an emulator or device with Android 8.0/API 26 or later.
 
@@ -23,7 +23,7 @@ On Android 17/API 37 or later, the local flavor also needs `ACCESS_LOCAL_NETWORK
 - **Synchronization:** durable outbox, stable operation IDs, optimistic server versions, retry/backoff, and explicit conflict choices.
 - **Settings:** stable local control/compact-card experiment assignment with a resettable override, optional local diagnostics, notification permission, and encrypted bearer-token storage for the local service.
 - **Study:** architecture notes and a Java Activity/Fragment/XML interoperability example.
-- **Tests:** domain policy, ViewModel state, HTTP contracts, Room transactions/migration, Compose interaction, worker policy, and whole-app journeys.
+- **Tests:** method-level checks for domain policy, ViewModel state, HTTP contracts, preferences, and worker policy; optional non-UI integrations for Room, Keystore, WorkManager, and the local server.
 
 Read the [requirements map](docs/REQUIREMENTS.md), then follow the [study guide](docs/STUDY_GUIDE.md). The [design](DESIGN.md) explains decisions and invariants. The [production runbook](docs/PRODUCTION.md) separates implemented safeguards from deployment and operations work that still needs a real organization and service.
 
@@ -46,19 +46,24 @@ Use `./gradlew` on macOS/Linux and `./gradlew.bat` in Windows PowerShell. The wr
 ```text
 ./gradlew :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest
 ./gradlew :app:lintDemoDebug :app:assembleDemoDebug :app:assembleLocalDebug
-python -m unittest discover -s server -v
 python scripts/verify-doc-links.py
 ```
 
-With an API 26+ device attached:
+These are the routine [CI](.github/workflows/ci.yml) checks. Tests invoke methods and inspect results or state without driving screens. Most use fakes; the data tests also exercise MockWebServer HTTP and DataStore file boundaries, and telemetry tests use Robolectric. They are not all isolated pure unit tests. Routine CI starts no emulator or Python server, and the project has no functional Compose/Espresso UI tests.
+
+Optional non-UI integration checks use an attached API 26+ device:
 
 ```text
-./gradlew --no-parallel :data:connectedDebugAndroidTest :feature:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
+./gradlew --no-parallel :data:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
 ```
 
-Device suites run sequentially so separate test apps do not compete for the same foreground window.
+These 18 checks cover Room transactions/migration, preferences, permission gating, Keystore, and WorkManager. Run them manually when studying or changing those boundaries. The optional Python server suite is also separate from routine CI:
 
-For an actual Android → HTTP → Python → SQLite integration test, boot an emulator and run the Windows helper. It creates a private temporary database and random token, refuses an occupied port, runs only the local-server integration class, then stops its own server and removes its temporary data:
+```text
+python -m unittest discover -s server -v
+```
+
+For an optional Android → HTTP → Python → SQLite integration test, boot an emulator and run the Windows helper. It calls repository methods without screen interaction, creates a private temporary database and random token, refuses an occupied port, runs only the local-server integration class, then stops its own server and removes its temporary data:
 
 ```powershell
 ./scripts/verify-local-server.ps1 -PythonExecutable 'C:\path\to\python.exe'
@@ -66,15 +71,15 @@ For an actual Android → HTTP → Python → SQLite integration test, boot an e
 
 Use a real Python executable, not the Windows Store alias. The optional `-Port 8081` selects another port. The generated credential is passed through the Gradle environment and is never printed; test reports may contain the synthetic observations. See the [real HTTP exercise](docs/STUDY_GUIDE.md#3-offline-operation-and-eventual-transfer) for the manual workflow.
 
-JUnit XML and HTML reports appear under each module's `build/test-results` and `build/reports`; device results appear under `build/outputs/androidTest-results`. [CI](.github/workflows/ci.yml) runs the host checks and an API 36 AOSP automated-test emulator suite. The [passing hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40655721754) executed 40 JVM, 18 server, and 24 device tests with no failures or skips. The [verification record](verification/RESULTS.md#hosted-ci-investigation) explains the runner fixes and separates functional CI from full-device visual and performance acceptance.
+JUnit XML and HTML reports appear under each module's `build/test-results` and `build/reports`; optional device results appear under `build/outputs/androidTest-results`. The current **43 JVM method tests**, demo lint, and both debug builds passed locally with JDK 21 on October 30, 2026. See [TODO](TODO.md) and the [verification record](verification/RESULTS.md) for scope and evidence. `python scripts/summarize-tests.py --require-results` summarizes only host tests by default; use `--scope device` after an optional device run.
 
-Verification completed on October 27, 2026 (Pacific): **83 distinct tests passed**: 40 JVM tests, 25 Android/device tests, and 18 Python server tests. The Android suite, including real Android-to-server synchronization, passed on Android 16/API 36.1 and Android 17/API 37 emulators. Both debug APK variants assemble, and all selected Android lint checks pass. See the [verification record](verification/RESULTS.md) for commands, evidence, warnings, and scope, and [TODO](TODO.md) for remaining acceptance work.
+Historical verification on October 27, 2026 (Pacific) passed **83 distinct tests**: 40 JVM, 25 Android/device, and 18 Python server tests on the then-current source. The Android suite passed on API 36.1 and 37. The subsequent [hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40655721754) passed 40 JVM, 18 server, and 24 device tests. Those counts include six UI tests that have since been removed and describe the earlier suite, not the current testing scope. The [verification record](verification/RESULTS.md#hosted-ci-investigation) retains that history.
 
 For baseline profiles and timing, see the [performance exercise](docs/STUDY_GUIDE.md#performance-exercise). No startup time, frame-rate improvement, or memory/battery claim is made without a measured result.
 
 ## Releases and library packaging
 
-Before creating, rebuilding, or publishing any release: review README, TODO, DESIGN, requirements, and production documentation against the final implementation; update them; validate links and applicable checks; and commit those updates in the exact source revision used for the release. Only then create tags or build release artifacts. The [manual release workflow](.github/workflows/release.yml) requires an explicit documentation-review acknowledgment and builds an unsigned demo bundle. It neither signs nor publishes to Google Play.
+Before creating, rebuilding, or publishing any release: review README, TODO, DESIGN, requirements, and production documentation against the final implementation; update them; validate links and applicable checks; and commit those updates in the exact source revision used for the release. Only then create tags or build release artifacts. The [manual release workflow](.github/workflows/release.yml) requires an explicit documentation-review acknowledgment, runs the JVM checks and Python server suite, and builds an unsigned demo bundle. It neither signs nor publishes to Google Play.
 
 The domain JAR and legacy AAR have Maven publications targeting their own local `build/study-maven` directories. After the same documentation review, `:domain:publishDomainPublicationToStudyRepository` and `:legacy:publishLegacyPublicationToStudyRepository` exercise packaging without sending anything to an external registry. A private Maven service requires credentials and access controls outside this repository.
 

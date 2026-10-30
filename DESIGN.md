@@ -58,6 +58,12 @@ Room notebook contents are app-private but not separately encrypted. Sign-out re
 
 Diagnostics are opt-in and local. The telemetry interface accepts typed events, not arbitrary strings containing note text or tokens. Local counters and crash exception type demonstrate instrumentation and consent. The compact-card experiment allocates installations to control/compact arms using a versioned SHA-256 hash of a randomly generated local installation ID persisted in DataStore. The ID is not transmitted or logged. A user can explicitly override the assigned layout and reset the override; overridden observations are excluded from arm-level metrics. Consent-gated local exposure and note-save counters demonstrate the measurement boundary. There is no configured Crashlytics/Sentry service, remote alerting, remote experiment rollout, or evidence of improved product outcomes.
 
+## Testing boundaries
+
+Routine tests call domain, ViewModel, adapter, preference, telemetry, and worker-policy methods and assert returned values, state, and collaborator effects. Constructor fakes and coroutine test dispatchers keep business behavior independent of screen rendering. MockWebServer and DataStore tests exercise real HTTP/file boundaries on the JVM, while Robolectric supplies Android behavior for local telemetry tests; these are not all pure isolated unit tests.
+
+Functional UI automation is outside the chosen test scope. Optional non-UI device tests cover Room transactions/migration, permission gating, Keystore, and WorkManager. The local server and Android-to-server integration suites are manual checks, and benchmark/profile sources are manual performance exercises. Routine CI runs JVM method tests, lint, builds, and documentation validation without starting an emulator or Python server. Screen layout, navigation, and accessibility are reviewed manually.
+
 ## Tradeoffs to study
 
 - Full snapshots and in-memory search simplify inspection. A large corpus needs incremental sync, pagination, bounded loading, and measured database search, not an unsubstantiated claim of scale.

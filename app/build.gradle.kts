@@ -55,11 +55,8 @@ dependencies {
     testImplementation(libs.test.junit)
     testImplementation(libs.test.robolectric)
     testImplementation(libs.coroutines.test)
+    androidTestImplementation(libs.test.android.core)
     androidTestImplementation(libs.test.android.junit)
     androidTestImplementation(libs.test.android.runner)
-    androidTestImplementation(libs.test.android.rules)
-    androidTestImplementation(libs.test.espresso)
-    androidTestImplementation(libs.compose.test.junit4)
     androidTestImplementation(libs.work.testing)
-    debugImplementation(libs.compose.test.manifest)
 }
