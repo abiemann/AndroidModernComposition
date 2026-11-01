@@ -33,41 +33,43 @@ fun JournalScreen(
     onCreate: () -> Unit,
     onRetry: () -> Unit = {},
 ) {
+    val filtered = state.query.isNotEmpty() || state.projectId.isNotEmpty()
+    val trulyEmpty = !state.loading && !state.loadFailed && state.totalCount == 0 && !filtered
+    val showControls = state.totalCount > 0 || filtered
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyVerticalGrid(
             columns = GridCells.Adaptive(290.dp),
             modifier = Modifier.widthIn(max = 1120.dp).fillMaxSize(),
-            contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 104.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(start = FieldNotesSpacing.Large, end = FieldNotesSpacing.Large,
+                top = FieldNotesSpacing.Medium, bottom = 104.dp),
+            horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium),
+            verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium),
         ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(stringResource(R.string.field_journal), style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary)
-                    Text(stringResource(R.string.journal_heading), style = MaterialTheme.typography.headlineLarge,
+            if (!trulyEmpty) item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
+                    Text(stringResource(R.string.journal), style = MaterialTheme.typography.headlineMedium,
                         modifier = Modifier.semantics { heading() })
-                    Text(stringResource(R.string.journal_subtitle), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    SummaryCard(state.totalCount, state.pendingCount)
-                    OutlinedTextField(
-                        value = state.query, onValueChange = onSearch,
-                        modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        label = { Text(stringResource(R.string.search_notes)) },
-                        leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                        trailingIcon = {
-                            if (state.query.isNotEmpty()) IconButton(onClick = { onSearch("") }) {
-                                Icon(Icons.Outlined.Close, stringResource(R.string.clear_search))
+                    if (!state.loading && !state.loadFailed) JournalSummary(state.totalCount, state.pendingCount)
+                    if (showControls) {
+                        OutlinedTextField(
+                            value = state.query, onValueChange = onSearch,
+                            modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            label = { Text(stringResource(R.string.search_notes)) },
+                            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                            trailingIcon = {
+                                if (state.query.isNotEmpty()) IconButton(onClick = { onSearch("") }) {
+                                    Icon(Icons.Outlined.Close, stringResource(R.string.clear_search))
+                                }
+                            },
+                        )
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Small)) {
+                            FilterChip(selected = state.projectId.isEmpty(), onClick = { onFilter("") },
+                                label = { Text(stringResource(R.string.all_projects)) })
+                            state.projects.forEach { project ->
+                                FilterChip(selected = state.projectId == project.id, onClick = { onFilter(project.id) },
+                                    label = { Text(project.name) })
                             }
-                        },
-                    )
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = state.projectId.isEmpty(), onClick = { onFilter("") },
-                            label = { Text(stringResource(R.string.all_projects)) })
-                        state.projects.forEach { project ->
-                            FilterChip(selected = state.projectId == project.id, onClick = { onFilter(project.id) },
-                                label = { Text(project.name) })
                         }
                     }
                 }
@@ -77,12 +79,14 @@ fun JournalScreen(
                     CircularProgressIndicator()
                 }
             } else if (state.loadFailed) item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
                     Text(stringResource(R.string.operation_failed), color = MaterialTheme.colorScheme.error)
                     OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
                 }
+            } else if (trulyEmpty) item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyJournal(state.pendingCount, onCreate)
             } else if (state.notes.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyJournal(state.query.isNotEmpty() || state.projectId.isNotEmpty(), onCreate)
+                NoMatchingNotes()
             }
             items(state.notes, key = { it.id }, contentType = { "note" }) { note ->
                 NoteCard(note, state.projects.firstOrNull { it.id == note.projectId }?.name.orEmpty(),
@@ -93,31 +97,52 @@ fun JournalScreen(
 }
 
 @Composable
-private fun SummaryCard(total: Int, pending: Int) {
-    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.large) {
-        Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Icon(Icons.Outlined.CloudDone, null, Modifier.size(28.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(stringResource(R.string.local_first), style = MaterialTheme.typography.titleSmall)
-                Text(if (pending > 0) pluralStringResource(R.plurals.pending_count, pending, pending) else stringResource(R.string.all_saved),
-                    style = MaterialTheme.typography.bodySmall)
+private fun JournalSummary(total: Int, pending: Int) {
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium),
+        verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Small),
+        itemVerticalAlignment = Alignment.CenterVertically) {
+        Text(pluralStringResource(R.plurals.notes_count, total, total), style = MaterialTheme.typography.labelLarge)
+        SyncSummary(pending)
+    }
+}
+
+@Composable
+private fun SyncSummary(pending: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.IconGap)) {
+        Icon(if (pending > 0) Icons.Outlined.Schedule else Icons.Outlined.CloudDone, null,
+            Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (pending > 0) pluralStringResource(R.plurals.pending_count, pending, pending) else stringResource(R.string.all_saved),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun EmptyJournal(pending: Int, onCreate: () -> Unit) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(vertical = FieldNotesSpacing.Large),
+            verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
+            Icon(Icons.Outlined.Eco, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.empty_heading), style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.semantics { heading() })
+            Text(stringResource(R.string.empty_body), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onCreate) {
+                Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(FieldNotesSpacing.IconGap))
+                Text(stringResource(R.string.new_note))
             }
-            Text(pluralStringResource(R.plurals.notes_count, total, total), style = MaterialTheme.typography.labelLarge)
+            if (pending > 0) SyncSummary(pending)
         }
     }
 }
 
 @Composable
-private fun EmptyJournal(filtered: Boolean, onCreate: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Icon(Icons.Outlined.Eco, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(stringResource(if (filtered) R.string.no_matches else R.string.empty_heading),
-            style = MaterialTheme.typography.titleLarge)
-        Text(stringResource(if (filtered) R.string.no_matches_body else R.string.empty_body),
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!filtered) OutlinedButton(onClick = onCreate) { Text(stringResource(R.string.new_note)) }
+private fun NoMatchingNotes() {
+    Column(Modifier.fillMaxWidth().padding(vertical = FieldNotesSpacing.Large),
+        verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Small)) {
+        Text(stringResource(R.string.no_matches), style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.semantics { heading() })
+        Text(stringResource(R.string.no_matches_body), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

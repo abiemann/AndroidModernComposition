@@ -1,5 +1,21 @@
 # Verification record
 
+## Interface improvements (November 1, 2026)
+
+The interface changes retain the method-level testing policy below. **43 JVM tests passed** (domain 11, data 10, feature 16, legacy 2, app 4), with zero failures/errors/skips. Feature method tests were rerun after the final large-text adjustment. Demo debug lint and both demo/local debug APK builds passed with Temurin JDK 21.0.13. Whitespace checks and 73 local documentation targets pass. No automated functional UI tests were added or run, and no device/server integration suite was rerun for this change.
+
+One intermediate copy-only build completed both APKs but its lint process hit a native `zip.dll` access violation in the Java runtime. The retry passed, as did the subsequent final feature-test/lint/build check with one Gradle worker. No application test assertion was disabled to obtain a pass.
+
+Manual rendered inspection used an isolated Pixel 6/API 36 Google APIs emulator with synthetic note data. It covered the empty and populated journal, full/compact cards, a project filter with no matches, the editor, Settings with collapsed/expanded experiment details, and scrolling enlarged Settings. Phone review included light/dark mode and 100%/200% system font; narrow review used a 320 dp window, and wide review a 1280 × 800 dp window with the navigation rail. The large-font review found clipping in the disclosure button's wrapped label; using the small Material shape instead of a capsule fixed it, and the updated render was inspected again.
+
+The local flavor's **Server access** section with no saved token was also inspected at normal font size on API 36. No credential was entered and no live-server request was validated. The isolated emulator's display settings were restored and the emulator was closed after review.
+
+Representative screenshots: [empty journal](ui-empty-light.png), [empty journal at 200% text](ui-empty-large-font.png), [populated journal](ui-journal-light.png), [expanded dark Settings](ui-settings-dark.png), [Settings at 200% text](ui-settings-large-font.png), and [wide dark journal](ui-tablet-dark.png). These are rendered review evidence, not a functional UI regression suite.
+
+A one-off sRGB contrast calculation checked the declared foreground/container pairs and normal text across the theme surfaces. All checked normal-text pairs exceed 4.5:1; the lowest is light secondary text on `surfaceDim` at 4.688:1. The normal `outline` role exceeds 3:1 across the surfaces checked. `outlineVariant` is intentionally subtler and does not meet 3:1; it is not evidence of an independently sufficient control boundary. Labels, icons, switches, and selected fills must carry the meaning. These palette checks do not cover composited disabled states or certify full accessibility.
+
+Full TalkBack traversal, every screen/state at large fonts, RTL, foldables, physical-device performance, and Android 17 permission-dialog review remain separate acceptance work. See [TODO](../TODO.md).
+
 ## Current test policy (October 30, 2026)
 
 Routine verification uses local JVM tests that call domain, repository, ViewModel, worker-policy, telemetry, and Java formatter methods. There are no functional UI tests: the five Compose tests and the single whole-app navigation journey have been removed, along with their UI-test dependencies and the CI emulator job. New direct ViewModel checks cover edit identity, deletion outcomes, and draft restoration without launching an Activity.

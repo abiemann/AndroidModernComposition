@@ -105,7 +105,8 @@ fun FieldNotesApp(environmentName: String = "Demo", onOpenLegacy: () -> Unit = {
                         }
                     },
                     floatingActionButton = {
-                        if (route == "journal" && (state.totalCount > 0 || state.query.isNotEmpty() || state.projectId.isNotEmpty())) ExtendedFloatingActionButton(
+                        if (route == "journal" && !state.loading && !state.loadFailed &&
+                            (state.totalCount > 0 || state.query.isNotEmpty() || state.projectId.isNotEmpty())) ExtendedFloatingActionButton(
                             onClick = { nav.navigate("edit/new") },
                             icon = { Icon(Icons.Outlined.Add, null) },
                             text = { Text(stringResource(R.string.new_note)) },

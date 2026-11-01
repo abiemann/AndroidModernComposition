@@ -19,9 +19,9 @@ On Android 17/API 37 or later, the local flavor also needs `ACCESS_LOCAL_NETWORK
 
 ## What to explore
 
-- **Journal:** create, search, filter by project, edit, delete, and inspect pending or conflict states.
+- **Journal:** create, search, filter by project, edit, delete, and inspect pending or conflict states. A focused empty state, responsive grid, and coordinated light/dark palette keep observations easy to read.
 - **Synchronization:** durable outbox, stable operation IDs, optimistic server versions, retry/backoff, and explicit conflict choices.
-- **Settings:** stable local control/compact-card experiment assignment with a resettable override, optional local diagnostics, notification permission, and encrypted bearer-token storage for the local service.
+- **Settings:** compact cards, optional local diagnostics, and notification permission. Expand **About the layout experiment** to inspect the stable assignment or reset an override. Encrypted access-token controls appear only in the local-server flavor.
 - **Study:** architecture notes and a Java Activity/Fragment/XML interoperability example.
 - **Tests:** method-level checks for domain policy, ViewModel state, HTTP contracts, preferences, and worker policy; optional non-UI integrations for Room, Keystore, WorkManager, and the local server.
 

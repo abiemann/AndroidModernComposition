@@ -50,6 +50,18 @@ There is intentionally no always-running service. A foreground service would nee
 
 Compose uses stable note keys, lazy collections, bounded content widths, a navigation rail at wider sizes, and a bottom navigation bar on compact windows. Labels, headings, meaningful icons, non-color status text, Material touch targets, system font scaling, and dark theme are part of the UI implementation. Automated tests do not substitute for TalkBack, large-font, switch-access, tablet, foldable, RTL, and keyboard review.
 
+## Interface design
+
+The visual language uses forest green for primary actions, paper-like light surfaces, and warm gold selection containers. Every Material color role has an explicit foreground/background pair in light and dark mode; fixed roles are shared intentionally. Error text and conflict surfaces use the error palette. Status also has a label and icon, so color is never the only signal.
+
+Serif headings give the journal its character; body text and controls use the platform sans-serif family. Typography is defined once in `Theme.kt`, with readable line heights and scalable `sp` sizes. Shared page and group spacing uses 8, 16, 24, and 32 dp. Journal cards keep their existing internal spacing. The journal grid is bounded to 1120 dp, and reading/forms to 680 dp, while compact windows use the available width and scroll vertically.
+
+An empty journal offers one prominent **New note** button near the top. A populated journal uses a smaller heading, a wrapping count/sync summary, and the floating creation action. Search and project filters remain available when a filter returns no matches. Pending deletion counts remain visible even when there are no notes left; loading and failure states do not present a misleading first-note invitation.
+
+Settings groups everyday controls under short headings. Each preference row is one accessible switch action with a minimum 48 dp target. Experiment assignment and reset controls sit behind **About the layout experiment**, whose expanded/collapsed state is exposed to accessibility services. Demo mode explains local-only sync; server credentials appear only in the local flavor. Action labels describe what happens, including saving a token without implying that the server has accepted it.
+
+These choices apply the hierarchy, typography, wording, and consistency guidance from [Impeccable](https://impeccable.style/) to native Material 3 components. No web-specific scanner or design plugin is required. Rendered review covers representative themes and font/window sizes; method tests remain focused on behavior. See [verification](verification/RESULTS.md) for the executed scope and remaining accessibility work.
+
 ## Security and observability
 
 The local server token is an opaque bearer credential. The UI does not own decryption or HTTP headers. A dedicated token store encrypts it with AES-GCM using a non-exportable Android Keystore key and an atomic file under the no-backup directory. A missing key, malformed record, or ciphertext-authentication failure clears unusable credential material and requires re-entry. An HTTP authentication rejection is a separate synchronization outcome. Credential processing is dispatched off the main thread. The app disables backup, restricts exported components, and limits the HTTP exception to the local development build/host.

@@ -5,6 +5,7 @@ This file separates implementation from evidence. A checked implementation item 
 ## Implemented study scope
 
 - [x] Kotlin/Compose journal with MVVM, unidirectional state, navigation, editor validation, search, project filter, settings, and study screens.
+- [x] Shared light/dark color roles and typography, focused journal hierarchy, grouped Settings, and accessible experiment disclosure; design choices documented for study.
 - [x] Modular dependency direction, Koin composition, injectable clocks/IDs/repositories, and Android-free write policy.
 - [x] Room relationships, pending mutations, conflict retention, tombstones, and a non-destructive migration.
 - [x] Persistent demo remote and real Retrofit/OkHttp JSON boundary with a local SQLite REST service.
@@ -22,6 +23,8 @@ Routine CI runs JVM method-level tests, lint, development APK builds, and the do
 Functional Compose and whole-app UI tests have been removed. The remaining 18 non-UI Android checks (14 data and 4 app), one real Android-to-server integration check, and 18 Python HTTP tests are optional manual exercises. The explicitly dispatched release workflow also runs the Python suite. No emulator or Python server integration runs in routine CI. Benchmark/profile generation remains a separate manual performance exercise.
 
 Verified locally October 30, 2026 with JDK 21.0.13: **43 JVM method tests passed**, with zero failures, errors, or skips. Demo debug lint and both development APK builds passed. The optional non-UI integration test APKs compile; device/server integration tests were not rerun for this scope change. Workflow syntax and 64 local documentation links pass. The revised CI configuration has not yet been run on GitHub. See [current verification](verification/RESULTS.md#current-test-policy-october-30-2026).
+
+The November 1 interface update also passed 43 JVM tests, demo lint, and both debug builds. Manual emulator review covered representative Journal/Settings states, 200% text, a narrow phone window, and a wide dark window. A wrapped disclosure-label clipping issue was fixed and visually rechecked. See [interface verification and screenshots](verification/RESULTS.md#interface-improvements-november-1-2026); functional UI tests remain excluded.
 
 ## Historical executed verification (October 27–28, 2026)
 

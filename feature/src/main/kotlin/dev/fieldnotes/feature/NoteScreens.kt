@@ -137,7 +137,8 @@ internal fun LoadingScreen() {
 @Composable
 internal fun ContentColumn(content: @Composable ColumnScope.() -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState())
-            .imePadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp), content = content)
+        Column(Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(rememberScrollState())
+            .imePadding().padding(FieldNotesSpacing.Large),
+            verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Large), content = content)
     }
 }
