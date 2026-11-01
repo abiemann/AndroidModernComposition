@@ -46,7 +46,7 @@ jobs:
           ./gradlew --stacktrace :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest :app:lintDemoRelease
       - name: Build unsigned demo bundle
         run: ./gradlew --stacktrace :app:bundleDemoRelease
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: unsigned-demo-bundle-${{ github.sha }}
           path: |
