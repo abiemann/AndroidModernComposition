@@ -55,7 +55,8 @@ class LocalServerIntegrationTest {
             assertEquals(title, remote.snapshot().notes.single { it.id == id }.title)
             assertEquals(SyncState.SYNCED, repository.observeNote(id).first()?.syncState)
 
-            repository.save(NoteDraft(id, "study", title, "A revised observation"))
+            val revision = requireNotNull(repository.observeNote(id).first()).revision
+            repository.save(NoteDraft(id, "study", title, "A revised observation", expectedRevision = revision))
             assertTrue(repository.sync() is SyncResult.Success)
             val edited = remote.snapshot().notes.single { it.id == id }
             assertEquals("study", edited.projectId)

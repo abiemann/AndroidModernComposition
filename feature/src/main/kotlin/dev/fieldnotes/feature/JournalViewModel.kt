@@ -20,13 +20,14 @@ data class JournalUiState(
     val compactCards: Boolean = false,
     val loading: Boolean = true,
     val pendingCount: Int = 0,
+    val attentionCount: Int = 0,
     val totalCount: Int = 0,
     val loadFailed: Boolean = false,
     val compactCardsExperiment: ExperimentAssignment = ExperimentAssignment(),
     val analyticsEnabled: Boolean = false,
 )
 
-enum class Feedback { SYNCED, CONFLICTS, SIGN_IN, LOCAL_NETWORK, OFFLINE, REJECTED, FAILED, DELETED, RESOLVED }
+enum class Feedback { SYNCED, CONFLICTS, SIGN_IN, LOCAL_NETWORK, OFFLINE, REJECTED, PAUSED, FAILED, DELETED, RESOLVED, RETRY_QUEUED }
 
 /** The screen sends actions here; only repositories produce durable application state. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -49,7 +50,7 @@ class JournalViewModel(
     private fun observeState(): Flow<JournalUiState> = combine(
         repository.observeNotes(), repository.observeProjects(), preferences.preferences, query, projectId,
     ) { notes, projects, settings, search, selected ->
-        val visible = notes.filter { !it.deleted || it.syncState == SyncState.CONFLICT }
+        val visible = notes.filter { !it.deleted || it.syncState == SyncState.CONFLICT || it.syncState == SyncState.REJECTED }
         JournalUiState(
             notes = visible.filter {
                 (selected.isEmpty() || it.projectId == selected) &&
@@ -63,7 +64,8 @@ class JournalViewModel(
             compactCardsExperiment = settings.compactCardsExperiment,
             analyticsEnabled = settings.analyticsEnabled,
             loading = false,
-            pendingCount = notes.count { it.syncState != SyncState.SYNCED },
+            pendingCount = notes.count { it.syncState == SyncState.PENDING },
+            attentionCount = notes.count { it.syncState == SyncState.CONFLICT || it.syncState == SyncState.REJECTED },
             totalCount = visible.size,
         )
     }.catch { error ->
@@ -94,7 +96,11 @@ class JournalViewModel(
         viewModelScope.launch {
             try {
                 _feedback.value = when (val result = repository.sync()) {
-                    is SyncResult.Success -> if (result.conflicts > 0) Feedback.CONFLICTS else Feedback.SYNCED
+                    is SyncResult.Success -> when {
+                        result.rejected > 0 -> Feedback.PAUSED
+                        result.conflicts > 0 -> Feedback.CONFLICTS
+                        else -> Feedback.SYNCED
+                    }
                     SyncResult.AuthenticationRequired -> Feedback.SIGN_IN
                     SyncResult.PermissionRequired -> Feedback.LOCAL_NETWORK
                     SyncResult.RetryableFailure -> {
@@ -114,17 +120,23 @@ class JournalViewModel(
     fun resolveConflict(id: String, keepLocal: Boolean) = perform(Feedback.RESOLVED) {
         repository.resolveConflict(id, keepLocal)
     }
+    fun retryRejected(id: String) = perform(Feedback.RETRY_QUEUED) { repository.retryRejected(id) }
 
     private fun perform(success: Feedback, action: suspend () -> Unit) {
         viewModelScope.launch {
             try {
                 action()
-                scheduler.requestSync()
-                _feedback.value = success
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 _feedback.value = Feedback.FAILED
+                return@launch
             }
+            // A durable mutation already succeeded. Periodic/startup sync can recover
+            // scheduling failure; reporting the mutation as failed would invite duplicates.
+            try { scheduler.requestSync() } catch (error: Exception) {
+                if (error is CancellationException) throw error
+            }
+            _feedback.value = success
         }
     }
 }

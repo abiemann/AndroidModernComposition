@@ -89,4 +89,47 @@ class RetrofitRemoteNotesTest {
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"current":null}"""))
         try { remote.push("n1", mutation); fail("Null conflict must be rejected") } catch (_: RejectedRequest) { }
     }
+
+    @Test fun definitiveRejectionRequiresSemanticStatusAndMatchingOperationId() = runTest {
+        listOf(400, 404).forEach { status ->
+            server.enqueue(MockResponse().setResponseCode(status)
+                .setBody("""{"error":"Invalid mutation","code":"mutation_rejected","operationId":"op1"}"""))
+            assertEquals(PushResult.Rejected, remote.push("n1", mutation))
+        }
+    }
+
+    @Test fun unboundAndFramingFailuresDoNotAuthorizeDiscardingTheOperation() = runTest {
+        val unboundResponses = listOf(
+            400 to """{"error":"Invalid mutation"}""",
+            400 to """{"code":"mutation_rejected"}""",
+            400 to """{"code":"mutation_rejected","operationId":"different-operation"}""",
+            404 to """{"error":"Unknown endpoint"}""",
+            400 to "{",
+            411 to """{"code":"mutation_rejected","operationId":"op1"}""",
+            413 to """{"code":"mutation_rejected","operationId":"op1"}""",
+            415 to """{"code":"mutation_rejected","operationId":"op1"}""",
+        )
+        unboundResponses.forEach { (status, body) ->
+            server.enqueue(MockResponse().setResponseCode(status).setBody(body))
+            try { remote.push("n1", mutation); fail("This response does not prove the operation was uncommitted") }
+            catch (_: RejectedRequest) { }
+        }
+    }
+
+    @Test fun malformedSuccessAndConflictRemainAmbiguousDespiteARejectionMarker() = runTest {
+        listOf(200, 409).forEach { status ->
+            server.enqueue(MockResponse().setResponseCode(status)
+                .setBody("""{"code":"mutation_rejected","operationId":"op1"}"""))
+            try { remote.push("n1", mutation); fail("A malformed acknowledgment must keep replay identity") }
+            catch (_: RejectedRequest) { }
+        }
+    }
+
+    @Test fun authenticationAndTransientErrorsCannotQuarantineAMutation() = runTest {
+        val body = """{"code":"mutation_rejected","operationId":"op1"}"""
+        server.enqueue(MockResponse().setResponseCode(401).setBody(body))
+        try { remote.push("n1", mutation); fail("Authentication failure must remain global") } catch (_: AuthenticationFailure) { }
+        server.enqueue(MockResponse().setResponseCode(503).setBody(body))
+        try { remote.push("n1", mutation); fail("Transient failure must remain retryable") } catch (_: IOException) { }
+    }
 }

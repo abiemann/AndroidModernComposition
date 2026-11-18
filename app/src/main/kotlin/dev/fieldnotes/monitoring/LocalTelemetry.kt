@@ -9,6 +9,7 @@ import dev.fieldnotes.domain.ExperimentVariant
 import dev.fieldnotes.domain.Preferences
 import dev.fieldnotes.domain.PreferencesRepository
 import dev.fieldnotes.domain.Telemetry
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -17,19 +18,21 @@ import kotlinx.coroutines.withContext
 
 /** A consent-gated, local-only analytics sink. No titles, text, tokens, or user IDs.
  * Replace this boundary with a vetted provider only after configuring consent/retention. */
-class LocalTelemetry(context: Context, private val preferences: PreferencesRepository, scope: CoroutineScope) : Telemetry {
-    @Volatile private var configuration = Preferences()
+class LocalTelemetry(
+    context: Context,
+    private val preferences: PreferencesRepository,
+    scope: CoroutineScope,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : Telemetry {
+    private var configuration = Preferences()
+    private var settingsEpoch = 0L
     private val exposed = mutableSetOf<ExperimentVariant>()
     private val storage = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE)
     init {
         scope.launch {
             preferences.preferences.collect {
                 synchronized(this@LocalTelemetry) {
-                    configuration = it
-                    if (!it.analyticsEnabled) {
-                        exposed.clear()
-                        storage.edit { clear() }
-                    }
+                    applyConfiguration(it)
                 }
             }
         }
@@ -45,21 +48,34 @@ class LocalTelemetry(context: Context, private val preferences: PreferencesRepos
         Log.i("FieldNotesMetrics", event.name)
     }
 
-    override suspend fun recordExposure(assignment: ExperimentAssignment) = withContext(Dispatchers.IO) {
-        // Read persisted consent for this actual frame, rather than racing the background collector.
-        val current = preferences.preferences.first()
-        synchronized(this@LocalTelemetry) {
-            configuration = current
-            if (current.analyticsEnabled) {
-                increment(AnalyticsEvent.JOURNAL_EXPOSED.name)
-                if (!assignment.isOverridden) {
-                    exposed += assignment.variant
-                    increment("${assignment.experimentId}.${assignment.variant}.JOURNAL_EXPOSED")
+    override suspend fun recordExposure(assignment: ExperimentAssignment) = withContext(ioDispatcher) {
+        while (true) {
+            val epoch = synchronized(this@LocalTelemetry) { settingsEpoch }
+            val current = preferences.preferences.first()
+            val applied = synchronized(this@LocalTelemetry) {
+                // An opt-out may have cleared diagnostics while this read was suspended.
+                // Re-read instead of replacing a newer configuration with the old snapshot.
+                if (settingsEpoch != epoch) return@synchronized false
+                applyConfiguration(current)
+                if (current.analyticsEnabled) {
+                    increment(AnalyticsEvent.JOURNAL_EXPOSED.name)
+                    if (!assignment.isOverridden) {
+                        exposed += assignment.variant
+                        increment("${assignment.experimentId}.${assignment.variant}.JOURNAL_EXPOSED")
+                    }
                 }
-            } else {
-                exposed.clear()
-                storage.edit { clear() }
+                true
             }
+            if (applied) break
+        }
+    }
+
+    private fun applyConfiguration(current: Preferences) {
+        configuration = current
+        settingsEpoch++
+        if (!current.analyticsEnabled) {
+            exposed.clear()
+            storage.edit { clear() }
         }
     }
 
@@ -71,9 +87,11 @@ class LocalTelemetry(context: Context, private val preferences: PreferencesRepos
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             try {
-                if (configuration.analyticsEnabled) {
-                    // Exception messages and stack arguments can contain private data. Save only type.
-                    storage.edit(commit = true) { putString("lastCrashType", error.javaClass.name.take(200)) }
+                synchronized(this@LocalTelemetry) {
+                    if (configuration.analyticsEnabled) {
+                        // Exception messages and stack arguments can contain private data. Save only type.
+                        storage.edit(commit = true) { putString("lastCrashType", error.javaClass.name.take(200)) }
+                    }
                 }
             } finally { previous?.uncaughtException(thread, error) }
         }

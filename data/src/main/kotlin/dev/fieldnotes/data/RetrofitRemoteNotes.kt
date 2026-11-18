@@ -20,6 +20,7 @@ interface NotesApi {
 }
 
 internal data class ConflictEnvelope(val current: RemoteNote)
+internal data class MutationFailureEnvelope(val code: String?, val operationId: String?)
 
 class RetrofitRemoteNotes(private val api: NotesApi) : RemoteNotes {
     private val gson = Gson()
@@ -49,6 +50,16 @@ class RetrofitRemoteNotes(private val api: NotesApi) : RemoteNotes {
             } catch (_: JsonParseException) { null }
             if (current == null || !valid(current) || current.id != id) throw RejectedRequest()
             return PushResult.Conflict(current)
+        }
+        if (response.code() == 400 || response.code() == 404) {
+            val rejection = try {
+                response.errorBody()?.use { gson.fromJson(it.charStream(), MutationFailureEnvelope::class.java) }
+            } catch (_: JsonParseException) { null }
+            // Status alone is not proof: parsing/framing failures may follow a previously
+            // committed attempt. Only the server's operation-bound semantic rejection is safe.
+            if (rejection?.code == "mutation_rejected" && rejection.operationId == mutation.operationId) {
+                return PushResult.Rejected
+            }
         }
         checkStatus(response.code())
         val note = response.body() ?: throw RejectedRequest()

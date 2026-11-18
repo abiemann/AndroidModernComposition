@@ -34,7 +34,10 @@ def main() -> int:
             return 1
     print(f"{len(files)} report files: " + ", ".join(f"{key}={value}" for key, value in totals.items()))
     print("Counts summarize reports currently on disk; clean/stale-report management belongs to the invoking build.")
-    return 1 if totals["failures"] or totals["errors"] or totals["tests"] == 0 else 0
+    executed = totals["tests"] - totals["skipped"]
+    if executed <= 0:
+        print("No tests executed; skipped tests do not establish a pass.")
+    return 1 if totals["failures"] or totals["errors"] or executed <= 0 else 0
 
 
 if __name__ == "__main__":

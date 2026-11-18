@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Iterator
 
 MAX_BODY_BYTES = 65_536
+MAX_NOTES = 10_000  # Includes retained tombstones; matches Android's snapshot limit.
 MAX_INTEGER = 2**63 - 1
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 MUTATION_FIELDS = {
@@ -31,6 +32,14 @@ class ProtocolError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+class MutationRejected(ProtocolError):
+    """This attempted mutation was rejected before any change was committed."""
+
+    def __init__(self, status: int, message: str, operation_id: str):
+        super().__init__(status, message)
+        self.operation_id = operation_id
 
 
 def encode_json(value: object) -> bytes:
@@ -134,30 +143,46 @@ class Store:
     def mutate(self, note_id: str, raw: object) -> tuple[int, dict]:
         if not IDENTIFIER.fullmatch(note_id):
             raise ProtocolError(400, "Invalid note identifier")
-        mutation = validate_mutation(raw)
-        canonical = json.dumps([note_id, mutation], sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-        request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        operation_id = raw.get("operationId") if isinstance(raw, dict) else None
+        if not isinstance(operation_id, str) or not IDENTIFIER.fullmatch(operation_id):
+            raise ProtocolError(400, "Invalid operationId")
+        try:
+            canonical = json.dumps([note_id, raw], sort_keys=True, ensure_ascii=False,
+                                   separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except (UnicodeError, ValueError, RecursionError) as exc:
+            raise MutationRejected(400, "Invalid Unicode or JSON value", operation_id) from exc
+        request_hash = hashlib.sha256(canonical).hexdigest()
         with self.connect() as connection:
             # Serialize compare-and-write. Two clients with the same base version
             # must never both succeed. SQLite's context manager commits on return.
             connection.execute("BEGIN IMMEDIATE")
             replay = connection.execute(
                 "SELECT request_hash, response_json FROM operations WHERE operation_id=?",
-                (mutation["operationId"],),
+                (operation_id,),
             ).fetchone()
             if replay:
                 if not hmac.compare_digest(replay["request_hash"], request_hash):
-                    raise ProtocolError(400, "operationId was already used for a different request")
+                    raise MutationRejected(400, "operationId was already used for a different request", operation_id)
                 return 200, json.loads(replay["response_json"])
+            # Honor an exact committed replay before applying current validation
+            # or admission policy. A lost acknowledgment must stay recoverable.
+            try:
+                mutation = validate_mutation(raw)
+            except ProtocolError as exc:
+                raise MutationRejected(exc.status, exc.message, operation_id) from exc
             project = connection.execute("SELECT 1 FROM projects WHERE id=?", (mutation["projectId"],)).fetchone()
             if project is None:
-                raise ProtocolError(400, "Unknown projectId")
+                raise MutationRejected(400, "Unknown projectId", operation_id)
             current = connection.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
             current_version = current["version"] if current else 0
             if mutation["baseVersion"] != current_version:
                 if current is None:
-                    raise ProtocolError(404, "Note does not exist at the requested baseVersion")
+                    raise MutationRejected(404, "Note does not exist at the requested baseVersion", operation_id)
                 return 409, {"current": self.note(current)}
+            # The cap is checked only for a new ID and inside the same write
+            # transaction. Replays, edits, and tombstones remain usable at capacity.
+            if current is None and connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0] >= MAX_NOTES:
+                raise MutationRejected(400, "Notebook capacity reached, including retained deletions", operation_id)
             result = {
                 "id": note_id,
                 "projectId": mutation["projectId"],
@@ -270,13 +295,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, self.server.store.snapshot())
             elif self.command == "PUT" and self.path.startswith("/v1/notes/"):
                 note_id = self.path[len("/v1/notes/"):]
+                # Framing/JSON errors cannot identify a complete logical retry;
+                # an earlier attempt could already have committed.
                 status, body = self.server.store.mutate(note_id, self.read_json())
                 self.respond(status, body)
             else:
                 self.respond(404, {"error": "Unknown endpoint"})
         except ProtocolError as exc:
             self.discard_unread_body()
-            self.respond(exc.status, {"error": exc.message})
+            body = {"error": exc.message}
+            if isinstance(exc, MutationRejected):
+                body["code"] = "mutation_rejected"
+                body["operationId"] = exc.operation_id
+            self.respond(exc.status, body)
         except sqlite3.Error:
             self.respond(503, {"error": "Storage temporarily unavailable"})
 

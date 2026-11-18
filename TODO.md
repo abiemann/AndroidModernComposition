@@ -18,13 +18,15 @@ This file separates implementation from evidence. A checked implementation item 
 
 ## Current testing scope
 
-Routine CI runs JVM method-level tests, lint, development APK builds, and the documentation link check. Method tests cover domain policy, ViewModel actions/state, Java formatting, worker policy, and local telemetry. HTTP MockWebServer and DataStore boundary checks also run on the JVM; the suite is not entirely pure isolated unit tests.
+Routine CI runs JVM method-level tests, lint, development APK builds, documentation link checks, and Python unit tests for test-report handling. Method tests cover domain policy, ViewModel actions and state, Java formatting, worker policy, and local telemetry. HTTP MockWebServer and DataStore boundary checks also run on the JVM.
 
-Functional Compose and whole-app UI tests have been removed. The remaining 18 non-UI Android checks (14 data and 4 app), one real Android-to-server integration check, and 18 Python HTTP tests are optional manual exercises. The explicitly dispatched release workflow also runs the Python suite. No emulator or Python server integration runs in routine CI. Benchmark/profile generation remains a separate manual performance exercise.
+The non-UI Android checks, the real Android-to-server check, and the Python HTTP suite are optional manual exercises. The explicitly dispatched release workflow also runs the Python HTTP suite. Routine CI runs without an emulator or Python server. Benchmark and profile generation remain separate manual performance exercises.
 
 Verified locally October 30, 2026 with JDK 21.0.13: **43 JVM method tests passed**, with zero failures, errors, or skips. Demo debug lint and both development APK builds passed. The optional non-UI integration test APKs compile; device/server integration tests were not rerun for this scope change. Workflow syntax and 64 local documentation links pass. The revised CI configuration has not yet been run on GitHub. See [current verification](verification/RESULTS.md#current-test-policy-october-30-2026).
 
 The November 1 interface update also passed 43 JVM tests, demo lint, and both debug builds. Manual emulator review covered representative Journal/Settings states, 200% text, a narrow phone window, and a wide dark window. A wrapped disclosure-label clipping issue was fixed and visually rechecked. See [interface verification and screenshots](verification/RESULTS.md#interface-improvements-november-1-2026); functional UI tests remain excluded.
+
+The November 18 audit fixes passed 62 JVM tests, demo lint, both debug builds, 23 Python HTTP tests, and 4 reporting tests. The isolated API 36 emulator passed 28 non-UI Android checks and one Android-to-Python integration check. See [audit verification](verification/RESULTS.md#audit-fixes-november-18-2026) for scope and execution details.
 
 ## Historical executed verification (October 27–28, 2026)
 

@@ -9,6 +9,7 @@ import dev.fieldnotes.domain.NoteDraft
 import dev.fieldnotes.domain.NoteRepository
 import dev.fieldnotes.domain.Project
 import dev.fieldnotes.domain.SaveNote
+import dev.fieldnotes.domain.StaleNoteEdit
 import dev.fieldnotes.domain.SyncResult
 import dev.fieldnotes.domain.SyncState
 import java.io.IOException
@@ -43,8 +44,12 @@ class OfflineFirstNoteRepository(
         val valid = SaveNote.validate(draft)
         initialize()
         return database.withTransaction {
+            val old = valid.id?.let {
+                val existing = dao.note(it) ?: throw StaleNoteEdit()
+                if (existing.deleted || valid.expectedRevision != existing.localRevision) throw StaleNoteEdit()
+                existing
+            }
             requireNotNull(dao.project(valid.projectId)) { "Unknown project" }
-            val old = valid.id?.let { requireNotNull(dao.note(it)) { "Note no longer exists" } }
             val note = NoteEntity(
                 id = old?.id ?: ids.next(), projectId = valid.projectId,
                 title = valid.title, body = valid.body, updatedAt = clock.now(),
@@ -53,6 +58,9 @@ class OfflineFirstNoteRepository(
                 syncState = if (old?.syncState == SyncState.CONFLICT.name) SyncState.CONFLICT.name else SyncState.PENDING.name,
                 deleted = false,
             )
+            // Only an explicit correction may supersede a definitively rejected head and
+            // its never-sent successors. An uncertain PENDING operation keeps its identity.
+            if (old?.syncState == SyncState.REJECTED.name) dao.discardPending(note.id)
             dao.putNote(note)
             // Editing a conflict preserves the remote copy until the user makes an explicit choice.
             if (note.syncState != SyncState.CONFLICT.name) enqueue(note)
@@ -66,8 +74,20 @@ class OfflineFirstNoteRepository(
             if (old.deleted) return@withTransaction
             val note = old.copy(deleted = true, updatedAt = clock.now(), localRevision = old.localRevision + 1,
                 syncState = if (old.syncState == SyncState.CONFLICT.name) old.syncState else SyncState.PENDING.name)
+            if (old.syncState == SyncState.REJECTED.name) dao.discardPending(id)
             dao.putNote(note)
             if (note.syncState != SyncState.CONFLICT.name) enqueue(note)
+        }
+    }
+
+    override suspend fun retryRejected(id: String) {
+        database.withTransaction {
+            val current = dao.note(id) ?: return@withTransaction
+            if (current.syncState != SyncState.REJECTED.name) return@withTransaction
+            val retry = current.copy(localRevision = current.localRevision + 1, syncState = SyncState.PENDING.name)
+            dao.discardPending(id)
+            dao.putNote(retry)
+            enqueue(retry)
         }
     }
 
@@ -104,7 +124,11 @@ class OfflineFirstNoteRepository(
                             if (current != null) {
                                 // A concurrent local edit must never be overwritten by an older acknowledgment.
                                 if (current.localRevision == operation.localRevision) {
-                                    dao.putNote(result.note.toEntity(current.localRevision))
+                                    val canonicalContentChanged = current.projectId != result.note.projectId ||
+                                        current.title != result.note.title || current.body != result.note.body ||
+                                        current.deleted != result.note.deleted
+                                    val revision = current.localRevision + if (canonicalContentChanged) 1 else 0
+                                    dao.putNote(result.note.toEntity(revision))
                                 } else {
                                     dao.putNote(current.copy(serverVersion = result.note.version))
                                 }
@@ -121,22 +145,29 @@ class OfflineFirstNoteRepository(
                             dao.discardPending(operation.noteId)
                         }
                     }
+                    PushResult.Rejected -> database.withTransaction {
+                        // Retain the complete chain and latest text for explicit user recovery.
+                        // nextOperation skips this note so unrelated notes and pulls can progress.
+                        dao.note(operation.noteId)?.let { current ->
+                            dao.putNote(current.copy(syncState = SyncState.REJECTED.name))
+                        }
+                    }
                 }
             }
             val snapshot = remote.snapshot()
-            val unresolvedConflicts = database.withTransaction {
+            val unresolved = database.withTransaction {
                 dao.insertProjects(snapshot.projects.map { ProjectEntity(it.id, it.name) })
                 snapshot.projects.forEach { dao.renameProject(it.id, it.name) }
                 snapshot.notes.forEach { server ->
                     val local = dao.note(server.id)
                     if (local == null || (local.syncState == SyncState.SYNCED.name && server.version > local.serverVersion)) {
-                        // Pending writes and explicit conflicts always retain their local copy.
+                        // Pending, conflicted and rejected work always retain their local copy.
                         dao.putNote(server.toEntity((local?.localRevision ?: 0) + 1))
                     }
                 }
-                dao.conflictCount()
+                dao.conflictCount() to dao.rejectedCount()
             }
-            SyncResult.Success(uploaded, unresolvedConflicts)
+            SyncResult.Success(uploaded, unresolved.first, unresolved.second)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: AuthenticationFailure) {

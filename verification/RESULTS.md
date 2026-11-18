@@ -1,5 +1,13 @@
 # Verification record
 
+## Audit fixes (November 18, 2026)
+
+Validation on Temurin JDK 21.0.13 passed **62 JVM tests** (domain 11, data 17, feature 26, legacy 2, app 6), demo debug lint, both debug APK builds, and all three non-UI test APK builds. The Python suites passed **23 server tests** and **4 test-report tests**. Workflow syntax, local documentation links, and whitespace checks passed.
+
+On the isolated API 36 Google APIs emulator, **28 non-UI Android checks** passed (24 data and 4 app), along with **one live Android-to-Python HTTP check** using a temporary SQLite database. Gradle's connected test launcher raised `UnsupportedOperationException` before running tests on this machine, so these counts come from invoking the same built APKs directly with Android's instrumentation runner on the isolated emulator. No functional UI tests were added or run.
+
+The regression cases cover stale edits after a pulled update or deletion, rejected writes followed by successful unrelated sync, replay after a lost acknowledgment and a truncated retry, draft restoration and recovery, diagnostics opt-out during an exposure read, preferences recovery while a collector stays active, and terminal worker outcomes that allow queued follow-up work to run.
+
 ## Interface improvements (November 1, 2026)
 
 The interface changes retain the method-level testing policy below. **43 JVM tests passed** (domain 11, data 10, feature 16, legacy 2, app 4), with zero failures/errors/skips. Feature method tests were rerun after the final large-text adjustment. Demo debug lint and both demo/local debug APK builds passed with Temurin JDK 21.0.13. Whitespace checks and 73 local documentation targets pass. No automated functional UI tests were added or run, and no device/server integration suite was rerun for this change.

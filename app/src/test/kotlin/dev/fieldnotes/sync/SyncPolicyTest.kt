@@ -8,14 +8,18 @@ class SyncPolicyTest {
     @Test fun `network errors retry with a bounded budget`() {
         assertEquals(WorkDecision.RETRY, SyncResult.RetryableFailure.workDecision(0))
         assertEquals(WorkDecision.RETRY, SyncResult.RetryableFailure.workDecision(4))
-        assertEquals(WorkDecision.FAILURE, SyncResult.RetryableFailure.workDecision(5))
+        assertEquals(WorkDecision.RETRY_EXHAUSTED, SyncResult.RetryableFailure.workDecision(5))
     }
-    @Test fun `invalid credentials do not create retry storms`() {
-        assertEquals(WorkDecision.FAILURE, SyncResult.AuthenticationRequired.workDecision(0))
-        assertEquals(WorkDecision.FAILURE, SyncResult.Rejected.workDecision(0))
-        assertEquals(WorkDecision.FAILURE, SyncResult.PermissionRequired.workDecision(0))
+    @Test fun `corrective actions complete the current wakeup with distinct outcomes`() {
+        assertEquals(WorkDecision.AUTHENTICATION_REQUIRED, SyncResult.AuthenticationRequired.workDecision(0))
+        assertEquals(WorkDecision.RESPONSE_REJECTED, SyncResult.Rejected.workDecision(0))
+        assertEquals(WorkDecision.PERMISSION_REQUIRED, SyncResult.PermissionRequired.workDecision(0))
     }
     @Test fun `user resolvable conflicts finish background work`() {
-        assertEquals(WorkDecision.SUCCESS, SyncResult.Success(2, 1).workDecision(0))
+        assertEquals(WorkDecision.CONFLICTS, SyncResult.Success(2, 1).workDecision(0))
+    }
+    @Test fun `a partial sync with a rejected note is distinguishable from a clean sync`() {
+        assertEquals(WorkDecision.MUTATIONS_REJECTED, SyncResult.Success(2, 0, rejected = 1).workDecision(0))
+        assertEquals(WorkDecision.SYNCED, SyncResult.Success(2, 0).workDecision(0))
     }
 }

@@ -6,10 +6,12 @@ The primary stack is **Kotlin, Jetpack Compose, Material 3, MVVM with unidirecti
 
 ## Start here
 
-1. Open the repository root in Android Studio with support for Android Gradle Plugin 9.3.2.
-2. Select JDK 21 as the Gradle runtime to match CI; Java/Kotlin bytecode targets Java 17.
+1. In Android Studio, use **File → Open** and select the **AndroidModernComposition** repository folder containing [settings.gradle.kts](settings.gradle.kts). The `app` folder is a module, not a standalone project. Use Android Studio with support for Android Gradle Plugin 9.3.2.
+2. Install JDK 21, which the Gradle daemon criteria and CI both select. Java and Kotlin bytecode targets Java 17.
 3. Install Android SDK Platform 37 (`platforms;android-37.0`) and Build Tools 36.0.0 or the compatible version selected by AGP. Set the SDK location through Android Studio or an untracked `local.properties` file.
 4. Select the `demoDebug` build variant and run on an emulator or device with Android 8.0/API 26 or later.
+
+If sync reports `Task 'prepareKotlinBuildScriptModel' not found in project ':app'`, reopen the repository folder above `app`. That IDE preparation task belongs to the root project.
 
 The **demo** flavor needs no account, server, or internet connection. Its simulated remote service persists separately from the journal tables in the same local database, so it can exercise the synchronization protocol across app restarts. A demo sync means “stored by the local simulator,” not “backed up to a cloud service.”
 
@@ -20,7 +22,7 @@ On Android 17/API 37 or later, the local flavor also needs `ACCESS_LOCAL_NETWORK
 ## What to explore
 
 - **Journal:** create, search, filter by project, edit, delete, and inspect pending or conflict states. A focused empty state, responsive grid, and coordinated light/dark palette keep observations easy to read.
-- **Synchronization:** durable outbox, stable operation IDs, optimistic server versions, retry/backoff, and explicit conflict choices.
+- **Synchronization:** durable outbox, stable operation IDs, optimistic revision checks, retry/backoff, and explicit recovery for conflicted or rejected notes.
 - **Settings:** compact cards, optional local diagnostics, and notification permission. Expand **About the layout experiment** to inspect the stable assignment or reset an override. Encrypted access-token controls appear only in the local-server flavor.
 - **Study:** architecture notes and a Java Activity/Fragment/XML interoperability example.
 - **Tests:** method-level checks for domain policy, ViewModel state, HTTP contracts, preferences, and worker policy; optional non-UI integrations for Room, Keystore, WorkManager, and the local server.
@@ -47,6 +49,7 @@ Use `./gradlew` on macOS/Linux and `./gradlew.bat` in Windows PowerShell. The wr
 ./gradlew :domain:test :data:testDebugUnitTest :feature:testDebugUnitTest :legacy:testDebugUnitTest :app:testDemoDebugUnitTest
 ./gradlew :app:lintDemoDebug :app:assembleDemoDebug :app:assembleLocalDebug
 python scripts/verify-doc-links.py
+python -m unittest discover -s scripts/tests -v
 ```
 
 These are the routine [CI](.github/workflows/ci.yml) checks. Tests invoke methods and inspect results or state without driving screens. Most use fakes; the data tests also exercise MockWebServer HTTP and DataStore file boundaries, and telemetry tests use Robolectric. They are not all isolated pure unit tests. Routine CI starts no emulator or Python server, and the project has no functional Compose/Espresso UI tests.
@@ -57,7 +60,7 @@ Optional non-UI integration checks use an attached API 26+ device:
 ./gradlew --no-parallel :data:connectedDebugAndroidTest :app:connectedDemoDebugAndroidTest
 ```
 
-These 18 checks cover Room transactions/migration, preferences, permission gating, Keystore, and WorkManager. Run them manually when studying or changing those boundaries. The optional Python server suite is also separate from routine CI:
+These checks cover Room transactions and migrations, preferences, permission gating, Keystore, and WorkManager. Run them manually when studying or changing those boundaries. The optional Python server suite is also separate from routine CI:
 
 ```text
 python -m unittest discover -s server -v
@@ -71,7 +74,7 @@ For an optional Android → HTTP → Python → SQLite integration test, boot an
 
 Use a real Python executable, not the Windows Store alias. The optional `-Port 8081` selects another port. The generated credential is passed through the Gradle environment and is never printed; test reports may contain the synthetic observations. See the [real HTTP exercise](docs/STUDY_GUIDE.md#3-offline-operation-and-eventual-transfer) for the manual workflow.
 
-JUnit XML and HTML reports appear under each module's `build/test-results` and `build/reports`; optional device results appear under `build/outputs/androidTest-results`. The current **43 JVM method tests**, demo lint, and both debug builds passed locally with JDK 21 on October 30, 2026. See [TODO](TODO.md) and the [verification record](verification/RESULTS.md) for scope and evidence. `python scripts/summarize-tests.py --require-results` summarizes only host tests by default; use `--scope device` after an optional device run.
+JUnit XML and HTML reports appear under each module's `build/test-results` and `build/reports`. Gradle device runs write results under `build/outputs/androidTest-results`. The current **62 JVM tests**, demo lint, and both debug builds passed on JDK 21. See [TODO](TODO.md) and the [verification record](verification/RESULTS.md#audit-fixes-november-18-2026) for the device and server checks. `python scripts/summarize-tests.py --require-results` summarizes host tests by default. Use `--scope device` for Gradle device reports.
 
 Historical verification on October 27, 2026 (Pacific) passed **83 distinct tests**: 40 JVM, 25 Android/device, and 18 Python server tests on the then-current source. The Android suite passed on API 36.1 and 37. The subsequent [hosted run](https://github.com/abiemann/AndroidModernComposition/actions/runs/40655721754) passed 40 JVM, 18 server, and 24 device tests. Those counts include six UI tests that have since been removed and describe the earlier suite, not the current testing scope. The [verification record](verification/RESULTS.md#hosted-ci-investigation) retains that history.
 

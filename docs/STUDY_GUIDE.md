@@ -34,6 +34,8 @@ Use two emulators configured with the same local server token. Sync a shared not
 
 Repeat with a deletion on one device. A deletion conflict must remain visible and resolvable. A tombstone prevents a disconnected client from treating absence in a snapshot as permission to recreate old data.
 
+Keep an editor open on one device while another device saves a newer revision. Sync the first device while its editor stays open, then press Save. The stale draft should remain available for recovery and the newer revision should remain intact. Compare this with an edit made during an upload, where the acknowledgment must preserve the newer *local* revision.
+
 Read the tests for **edit during upload** and **lost response after commit**. They are different races. In the second, the server may already have committed, so changing the operation ID on retry can duplicate a write. Trace why immutable outbox payloads and transactional acknowledgments are necessary.
 
 The server's own concurrency tests issue simultaneous requests against real sockets and SQLite. Exactly one write based on the same version should win; replaying the same successful operation should return the same original response even after later edits.

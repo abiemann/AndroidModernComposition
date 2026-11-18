@@ -5,16 +5,29 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import dev.fieldnotes.domain.CompactCardsExperiment
 import dev.fieldnotes.domain.ExperimentVariant
+import java.io.IOException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.*
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class PreferenceDataStoreRepositoryTest {
     @Test fun concurrentCollectorsCreateOnePersistedAssignment() = runTest {
         val store = MemoryStore()
@@ -49,11 +62,80 @@ class PreferenceDataStoreRepositoryTest {
         assertFalse(state.notificationsEnabled)
     }
 
+    @Test fun initializationFailureRecoversWithoutReplacingTheCollector() = runTest {
+        val store = MemoryStore().apply { writeFailures = 1 }
+        val repository = PreferenceDataStoreRepository(store) { "installation-123" }
+        val observed = mutableListOf<dev.fieldnotes.domain.Preferences>()
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            repository.preferences.collect { observed += it }
+        }
+        assertTrue(observed.single().compactCardsExperiment.isOverridden)
+        assertFalse(observed.single().analyticsEnabled)
+        repository.setAnalyticsEnabled(true)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(observed.last().analyticsEnabled)
+        assertFalse(observed.last().compactCardsExperiment.isOverridden)
+        repository.setNotificationsEnabled(true)
+        runCurrent()
+        assertTrue(observed.last().notificationsEnabled)
+        assertTrue(collector.isActive)
+        collector.cancelAndJoin()
+    }
+
+    @Test fun readFailureAfterEmissionRecoversAndContinuesObservingEdits() = runTest {
+        val store = MemoryStore()
+        val repository = PreferenceDataStoreRepository(store) { "installation-123" }
+        val observed = mutableListOf<dev.fieldnotes.domain.Preferences>()
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            repository.preferences.collect { observed += it }
+        }
+        assertFalse(observed.last().compactCardsExperiment.isOverridden)
+        store.readFailures = 1
+        repository.setAnalyticsEnabled(true)
+        runCurrent()
+        assertFalse(observed.last().analyticsEnabled)
+        assertTrue(observed.last().compactCardsExperiment.isOverridden)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(observed.last().analyticsEnabled)
+        repository.setCompactCards(false)
+        runCurrent()
+        assertFalse(observed.last().compactCards)
+        assertTrue(observed.last().compactCardsExperiment.isOverridden)
+        assertTrue(collector.isActive)
+        collector.cancelAndJoin()
+    }
+
+    @Test fun cancellationStopsStorageRetryWork() = runTest {
+        val store = MemoryStore().apply { writeFailures = Int.MAX_VALUE }
+        val repository = PreferenceDataStoreRepository(store) { "installation-123" }
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            repository.preferences.collect { }
+        }
+        assertEquals(1, store.writeAttempts)
+        collector.cancelAndJoin()
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(1, store.writeAttempts)
+    }
+
     private class MemoryStore : DataStore<Preferences> {
-        override val data = MutableStateFlow(emptyPreferences())
+        private val values = MutableStateFlow(emptyPreferences())
+        var writeFailures = 0
+        var readFailures = 0
+        var writeAttempts = 0
+        override val data: Flow<Preferences> = flow {
+            emitAll(values.map { value ->
+                if (readFailures > 0) { readFailures--; throw IOException("Temporary read failure") }
+                value
+            })
+        }
         private val lock = Mutex()
         override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences = lock.withLock {
-            transform(data.value).also { data.value = it }
+            writeAttempts++
+            if (writeFailures > 0) { writeFailures--; throw IOException("Temporary write failure") }
+            transform(values.value).also { values.value = it }
         }
     }
 }

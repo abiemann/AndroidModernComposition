@@ -3,4 +3,5 @@
 -keep class dev.fieldnotes.data.Mutation { *; }
 -keep class dev.fieldnotes.data.Snapshot { *; }
 -keep class dev.fieldnotes.data.ConflictEnvelope { *; }
+-keep class dev.fieldnotes.data.MutationFailureEnvelope { *; }
 -keep class dev.fieldnotes.domain.Project { *; }

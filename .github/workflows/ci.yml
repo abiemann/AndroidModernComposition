@@ -30,8 +30,10 @@ jobs:
       - name: Install compile SDK
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Validate documentation
-        run: python scripts/verify-doc-links.py
+      - name: Validate documentation and test reporting
+        run: |
+          python scripts/verify-doc-links.py
+          python -m unittest discover -s scripts/tests -v
       - name: Run JVM method tests, lint, and assemble development apps
         id: host-tests
         run: |

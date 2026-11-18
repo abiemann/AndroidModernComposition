@@ -22,12 +22,21 @@ import dev.fieldnotes.domain.*
 
 @Composable
 internal fun NoteScreen(
-    note: Note?, projects: List<Project>, loading: Boolean,
+    note: Note?, projects: List<Project>, loading: Boolean, loadFailed: Boolean,
     onEdit: () -> Unit, onDelete: () -> Unit, onResolve: (Boolean) -> Unit,
+    onRetryLoad: () -> Unit, onRetrySync: () -> Unit,
 ) {
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     if (loading) {
         LoadingScreen()
+        return
+    }
+    if (loadFailed) {
+        ContentColumn {
+            Text(stringResource(R.string.note_load_failed), color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            OutlinedButton(onClick = onRetryLoad) { Text(stringResource(R.string.retry)) }
+        }
         return
     }
     ContentColumn {
@@ -47,6 +56,15 @@ internal fun NoteScreen(
                         Text(stringResource(R.string.conflict_body))
                         Button(onClick = { onResolve(true) }) { Text(stringResource(R.string.keep_local)) }
                         OutlinedButton(onClick = { onResolve(false) }) { Text(stringResource(R.string.use_server)) }
+                    }
+                }
+            }
+            if (note.syncState == SyncState.REJECTED) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Column(Modifier.padding(FieldNotesSpacing.Large), verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
+                        Text(stringResource(R.string.rejected_heading), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(if (note.deleted) R.string.rejected_deletion_body else R.string.rejected_note_body))
+                        Button(onClick = onRetrySync) { Text(stringResource(R.string.retry_sync)) }
                     }
                 }
             }
@@ -81,7 +99,9 @@ internal fun NoteScreen(
 fun EditorScreen(
     state: EditorUiState, onTitle: (String) -> Unit, onBody: (String) -> Unit,
     onProject: (String) -> Unit, onSave: () -> Unit, onRetry: () -> Unit,
+    onSaveAsNew: () -> Unit, onReloadLatest: () -> Unit,
 ) {
+    var confirmReload by rememberSaveable { mutableStateOf(false) }
     if (state.loading) { LoadingScreen(); return }
     ContentColumn {
         Text(stringResource(if (state.editing) R.string.edit_note else R.string.new_note), style = MaterialTheme.typography.headlineMedium,
@@ -89,6 +109,18 @@ fun EditorScreen(
         if (state.missing) {
             Text(stringResource(R.string.missing_note))
         } else {
+            if (state.loadFailed) {
+                Text(stringResource(R.string.editor_load_failed), color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
+            }
+            if (state.stale) {
+                Text(stringResource(R.string.stale_draft), color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                if (!state.latestUnavailable) OutlinedButton(onClick = { confirmReload = true }, enabled = !state.saving && !state.loadFailed) {
+                    Text(stringResource(R.string.reload_latest))
+                }
+            }
             Text(stringResource(R.string.editor_hint), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(stringResource(R.string.project_label), style = MaterialTheme.typography.labelMedium)
@@ -96,18 +128,18 @@ fun EditorScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.projects.forEach { project ->
                     FilterChip(selected = project.id == state.projectId, onClick = { onProject(project.id) },
-                        enabled = !state.saving, label = { Text(project.name) })
+                        enabled = !state.saving && !state.loadFailed, label = { Text(project.name) })
                 }
             }
             OutlinedTextField(value = state.title, onValueChange = onTitle, singleLine = true,
                 modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.title_label)) },
-                enabled = !state.saving,
+                enabled = !state.saving && !state.loadFailed,
                 isError = state.validation == InvalidNote.Reason.TITLE_REQUIRED || state.validation == InvalidNote.Reason.TITLE_TOO_LONG,
                 supportingText = { Text("${state.title.length} / 120") })
             OutlinedTextField(value = state.body, onValueChange = onBody,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp), minLines = 7,
                 label = { Text(stringResource(R.string.body_label)) },
-                placeholder = { Text(stringResource(R.string.body_placeholder)) }, enabled = !state.saving,
+                placeholder = { Text(stringResource(R.string.body_placeholder)) }, enabled = !state.saving && !state.loadFailed,
                 isError = state.validation == InvalidNote.Reason.BODY_TOO_LONG,
                 supportingText = { Text("${state.body.length} / 10,000") })
             state.validation?.let { reason ->
@@ -120,13 +152,20 @@ fun EditorScreen(
             }
             if (state.failed) {
                 Text(stringResource(R.string.operation_failed), color = MaterialTheme.colorScheme.error)
-                if (state.projects.isEmpty()) OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
             }
-            Button(onClick = onSave, enabled = !state.saving && state.projects.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(if (state.saving) R.string.saving else R.string.save))
+            Button(onClick = if (state.stale) onSaveAsNew else onSave,
+                enabled = !state.saving && !state.loadFailed && state.projects.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(when { state.saving -> R.string.saving; state.stale -> R.string.save_as_new; else -> R.string.save }))
             }
         }
     }
+    if (confirmReload) AlertDialog(
+        onDismissRequest = { confirmReload = false },
+        title = { Text(stringResource(R.string.reload_latest)) },
+        text = { Text(stringResource(R.string.reload_latest_confirmation)) },
+        confirmButton = { TextButton(onClick = { confirmReload = false; onReloadLatest() }) { Text(stringResource(R.string.reload_latest)) } },
+        dismissButton = { TextButton(onClick = { confirmReload = false }) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 @Composable

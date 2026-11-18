@@ -74,9 +74,12 @@ interface NotesDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertProjects(projects: List<ProjectEntity>)
     @Query("UPDATE projects SET name = :name WHERE id = :id") suspend fun renameProject(id: String, name: String)
     @Insert suspend fun enqueue(operation: OutboxEntity)
-    @Query("SELECT * FROM outbox ORDER BY sequence LIMIT 1") suspend fun nextOperation(): OutboxEntity?
+    @Query("""SELECT outbox.* FROM outbox INNER JOIN notes ON notes.id = outbox.noteId
+        WHERE notes.syncState = 'PENDING' ORDER BY outbox.sequence LIMIT 1""")
+    suspend fun nextOperation(): OutboxEntity?
     @Query("SELECT COUNT(*) FROM outbox WHERE noteId = :id") suspend fun pendingCount(id: String): Int
     @Query("SELECT COUNT(*) FROM notes WHERE syncState = 'CONFLICT'") suspend fun conflictCount(): Int
+    @Query("SELECT COUNT(*) FROM notes WHERE syncState = 'REJECTED'") suspend fun rejectedCount(): Int
     @Query("DELETE FROM outbox WHERE operationId = :operationId") suspend fun acknowledge(operationId: String)
     @Query("DELETE FROM outbox WHERE noteId = :id") suspend fun discardPending(id: String)
     @Query("UPDATE outbox SET baseVersion = :version WHERE noteId = :id") suspend fun rebasePending(id: String, version: Long)

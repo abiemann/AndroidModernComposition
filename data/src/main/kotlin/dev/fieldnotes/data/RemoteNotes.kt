@@ -28,6 +28,8 @@ data class Mutation(
 sealed interface PushResult {
     data class Accepted(val note: RemoteNote) : PushResult
     data class Conflict(val current: RemoteNote) : PushResult
+    /** The server explicitly guarantees this mutation was not committed. */
+    data object Rejected : PushResult
 }
 
 class AuthenticationFailure : Exception()

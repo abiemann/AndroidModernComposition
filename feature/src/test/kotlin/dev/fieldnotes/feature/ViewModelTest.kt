@@ -18,7 +18,8 @@ class ViewModelTest {
     private lateinit var repository: FakeNotes
     private lateinit var settings: FakePreferences
     private var schedules = 0
-    private val scheduler = SyncScheduler { schedules++ }
+    private var scheduleFails = false
+    private val scheduler = SyncScheduler { schedules++; if (scheduleFails) error("scheduler unavailable") }
     private val telemetry = object : Telemetry { override fun record(event: AnalyticsEvent) = Unit }
 
     @Before fun setUp() {
@@ -26,6 +27,7 @@ class ViewModelTest {
         repository = FakeNotes()
         settings = FakePreferences()
         schedules = 0
+        scheduleFails = false
     }
     @After fun tearDown() { Dispatchers.resetMain() }
 
@@ -70,7 +72,7 @@ class ViewModelTest {
         vm.project("study")
         vm.save()
         runCurrent()
-        assertEquals(NoteDraft("existing-note", "study", "Revised observation", "Additional details"),
+        assertEquals(NoteDraft("existing-note", "study", "Revised observation", "Additional details", expectedRevision = 0L),
             repository.lastDraft)
         assertEquals("existing-note", vm.state.value.savedId)
         assertEquals(1, repository.saves)
@@ -112,6 +114,112 @@ class ViewModelTest {
         vm.save()
         runCurrent()
         assertEquals("note-1", vm.state.value.savedId)
+    }
+
+    @Test fun `stale save keeps the original revision and can explicitly save a copy`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Original", "field").copy(revision = 4))
+        val vm = editor(SavedStateHandle(mapOf("noteId" to "a")))
+        runCurrent()
+        vm.title("My unsaved work")
+        vm.body("Keep these details")
+        repository.notes.value = listOf(note("a", "Changed elsewhere", "field").copy(revision = 5))
+        repository.staleSave = true
+        vm.save()
+        runCurrent()
+        assertEquals(4L, repository.lastDraft?.expectedRevision)
+        assertTrue(vm.state.value.stale)
+        assertEquals("My unsaved work", vm.state.value.title)
+        assertEquals("Keep these details", vm.state.value.body)
+        assertNull(vm.state.value.savedId)
+        assertEquals(0, schedules)
+        vm.saveAsNew()
+        runCurrent()
+        assertNull(repository.lastDraft?.id)
+        assertNull(repository.lastDraft?.expectedRevision)
+        assertEquals("My unsaved work", repository.lastDraft?.title)
+        assertEquals("note-1", vm.state.value.savedId)
+        assertEquals(1, schedules)
+    }
+
+    @Test fun `restoration retains the original revision and explicit reload replaces the draft`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Original", "field").copy(revision = 4))
+        val handle = SavedStateHandle(mapOf("noteId" to "a"))
+        val first = editor(handle)
+        runCurrent()
+        first.title("Unsaved")
+        repository.notes.value = listOf(note("a", "Latest", "study").copy(revision = 5))
+        val restored = editor(SavedStateHandle(handle.keys().associateWith { handle.get<Any?>(it) }))
+        runCurrent()
+        assertTrue(restored.state.value.stale)
+        assertEquals("Unsaved", restored.state.value.title)
+        restored.save()
+        runCurrent()
+        assertEquals(0, repository.saves)
+        restored.reloadLatest()
+        runCurrent()
+        assertFalse(restored.state.value.stale)
+        assertEquals("Latest", restored.state.value.title)
+        assertEquals("study", restored.state.value.projectId)
+        restored.save()
+        runCurrent()
+        assertEquals(5L, repository.lastDraft?.expectedRevision)
+    }
+
+    @Test fun `older restored draft without a revision requires an explicit choice`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Current", "field").copy(revision = 9))
+        val vm = editor(SavedStateHandle(mapOf("noteId" to "a", "initialized" to true,
+            "title" to "Older draft", "body" to "Keep me", "projectId" to "field")))
+        runCurrent()
+        assertTrue(vm.state.value.stale)
+        assertEquals("Older draft", vm.state.value.title)
+        vm.save()
+        runCurrent()
+        assertEquals(0, repository.saves)
+        vm.saveAsNew()
+        runCurrent()
+        assertNull(repository.lastDraft?.expectedRevision)
+        assertNull(repository.lastDraft?.id)
+        assertEquals("Older draft", repository.lastDraft?.title)
+    }
+
+    @Test fun `restored draft of a deleted note remains available as a copy`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Deleted", "field").copy(revision = 5, deleted = true))
+        val vm = editor(SavedStateHandle(mapOf("noteId" to "a", "initialized" to true,
+            "expectedRevision" to 4L, "title" to "Unsaved", "body" to "Preserve", "projectId" to "field")))
+        runCurrent()
+        assertTrue(vm.state.value.stale)
+        assertTrue(vm.state.value.latestUnavailable)
+        assertFalse(vm.state.value.missing)
+        vm.reloadLatest()
+        runCurrent()
+        assertEquals("Unsaved", vm.state.value.title)
+        vm.saveAsNew()
+        runCurrent()
+        assertEquals("note-1", vm.state.value.savedId)
+        assertEquals("Preserve", repository.lastDraft?.body)
+    }
+
+    @Test fun `failed initial load keeps draft fields and exposes recovery until retry succeeds`() = runTest(dispatcher) {
+        repository.failProjects = true
+        val handle = SavedStateHandle()
+        val vm = editor(handle)
+        runCurrent()
+        assertTrue(vm.state.value.loadFailed)
+        vm.title("Typed before recovery")
+        vm.body("Keep this draft")
+        assertTrue(vm.state.value.loadFailed)
+        vm.save()
+        runCurrent()
+        assertEquals(0, repository.saves)
+        repository.failProjects = false
+        vm.load()
+        runCurrent()
+        assertFalse(vm.state.value.loadFailed)
+        assertEquals("Typed before recovery", vm.state.value.title)
+        assertEquals("Keep this draft", vm.state.value.body)
+        vm.save()
+        runCurrent()
+        assertEquals("Typed before recovery", repository.lastDraft?.title)
     }
 
     @Test fun `deleted record cannot silently be recreated by editor`() = runTest(dispatcher) {
@@ -168,6 +276,61 @@ class ViewModelTest {
         assertEquals(0, schedules)
         assertEquals(Feedback.FAILED, vm.feedback.value)
         assertFalse(feedback.contains(Feedback.DELETED))
+    }
+
+    @Test fun `scheduling failure does not misreport a completed deletion or conflict resolution`() = runTest(dispatcher) {
+        scheduleFails = true
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.delete("deleted")
+        runCurrent()
+        assertEquals("deleted", repository.lastDeleteId)
+        assertEquals(Feedback.DELETED, vm.feedback.value)
+        vm.resolveConflict("conflicted", keepLocal = false)
+        runCurrent()
+        assertEquals("conflicted" to false, repository.lastResolution)
+        assertEquals(Feedback.RESOLVED, vm.feedback.value)
+        assertEquals(2, schedules)
+    }
+
+    @Test fun `rejected tombstones stay visible and are distinct from pending uploads`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("paused", "Rejected deletion", "field").copy(deleted = true, syncState = SyncState.REJECTED),
+            note("pending", "Pending deletion", "field").copy(deleted = true))
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect() }
+        runCurrent()
+        assertEquals(listOf("paused"), vm.state.value.notes.map { it.id })
+        assertEquals(1, vm.state.value.attentionCount)
+        assertEquals(1, vm.state.value.pendingCount)
+    }
+
+    @Test fun `retry rejected change delegates its identity and schedules durable work`() = runTest(dispatcher) {
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.retryRejected("paused")
+        runCurrent()
+        assertEquals("paused", repository.lastRetryId)
+        assertEquals(1, schedules)
+        assertEquals(Feedback.RETRY_QUEUED, vm.feedback.value)
+    }
+
+    @Test fun `failed rejected retry never schedules or reports queued`() = runTest(dispatcher) {
+        repository.failRetry = true
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.retryRejected("paused")
+        runCurrent()
+        assertEquals(0, schedules)
+        assertEquals(Feedback.FAILED, vm.feedback.value)
+    }
+
+    @Test fun `paused note counts are distinct from an unusable sync response`() = runTest(dispatcher) {
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        repository.syncResult = SyncResult.Success(0, 0, rejected = 1)
+        vm.sync()
+        runCurrent()
+        assertEquals(Feedback.PAUSED, vm.feedback.value)
+        repository.syncResult = SyncResult.Rejected
+        vm.sync()
+        runCurrent()
+        assertEquals(Feedback.REJECTED, vm.feedback.value)
     }
 
     @Test fun `tombstone conflicts remain visible for resolution`() = runTest(dispatcher) {
@@ -249,26 +412,39 @@ private class FakeNotes : NoteRepository {
     var failSave = false
     var failRead = false
     var failDelete = false
+    var failProjects = false
+    var staleSave = false
+    var failRetry = false
     var lastDraft: NoteDraft? = null
     var lastDeleteId: String? = null
+    var lastRetryId: String? = null
+    var lastResolution: Pair<String, Boolean>? = null
     var syncResult: SyncResult = SyncResult.Success(0, 0)
     override fun observeNotes(): Flow<List<Note>> = flow {
         if (failRead) error("read unavailable")
         emitAll(notes)
     }
     override fun observeNote(id: String): Flow<Note?> = notes.map { list -> list.find { it.id == id } }
-    override fun observeProjects() = flowOf(listOf(Project("field", "Fieldwork"), Project("study", "Study")))
+    override fun observeProjects(): Flow<List<Project>> = flow {
+        if (failProjects) error("projects unavailable")
+        emit(listOf(Project("field", "Fieldwork"), Project("study", "Study")))
+    }
     override suspend fun save(draft: NoteDraft): String {
         if (failSave) error("storage unavailable")
-        saves++
         lastDraft = draft
+        if (staleSave && draft.id != null) throw StaleNoteEdit()
+        saves++
         return draft.id ?: "note-1"
     }
     override suspend fun delete(id: String) {
         lastDeleteId = id
         if (failDelete) error("storage unavailable")
     }
-    override suspend fun resolveConflict(id: String, keepLocal: Boolean) = Unit
+    override suspend fun resolveConflict(id: String, keepLocal: Boolean) { lastResolution = id to keepLocal }
+    override suspend fun retryRejected(id: String) {
+        lastRetryId = id
+        if (failRetry) error("retry unavailable")
+    }
     override suspend fun sync(): SyncResult = syncResult
 }
 

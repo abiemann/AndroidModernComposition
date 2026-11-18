@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
+import androidx.work.workDataOf
 import dev.fieldnotes.domain.*
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -18,13 +19,16 @@ class SyncWorkerTest {
         assertEquals(ListenableWorker.Result.retry(), worker(SyncResult.RetryableFailure).doWork())
     }
 
-    @Test fun authenticationFailureNeedsUserAction() = runBlocking {
-        assertEquals(ListenableWorker.Result.failure(), worker(SyncResult.AuthenticationRequired).doWork())
+    @Test fun authenticationOutcomeLetsAnAppendedRecoveryRun() = runBlocking {
+        assertEquals(completed(WorkDecision.AUTHENTICATION_REQUIRED), worker(SyncResult.AuthenticationRequired).doWork())
     }
 
     @Test fun conflictIsDurableAndWorkerCompletes() = runBlocking {
-        assertEquals(ListenableWorker.Result.success(), worker(SyncResult.Success(0, 1)).doWork())
+        assertEquals(completed(WorkDecision.CONFLICTS), worker(SyncResult.Success(0, 1)).doWork())
     }
+
+    private fun completed(decision: WorkDecision) =
+        ListenableWorker.Result.success(workDataOf(SyncWorker.OUTCOME_KEY to decision.name))
 
     private fun worker(outcome: SyncResult): SyncWorker {
         val repository = object : NoteRepository {
@@ -34,6 +38,7 @@ class SyncWorkerTest {
             override suspend fun save(draft: NoteDraft) = "test"
             override suspend fun delete(id: String) = Unit
             override suspend fun resolveConflict(id: String, keepLocal: Boolean) = Unit
+            override suspend fun retryRejected(id: String) = Unit
             override suspend fun sync() = outcome
         }
         val preferences = object : PreferencesRepository {

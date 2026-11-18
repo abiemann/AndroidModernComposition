@@ -72,6 +72,7 @@ class SaveNoteTest {
         override fun observeProjects() = flowOf(emptyList<Project>())
         override suspend fun delete(id: String) = Unit
         override suspend fun resolveConflict(id: String, keepLocal: Boolean) = Unit
+        override suspend fun retryRejected(id: String) = Unit
         override suspend fun sync() = SyncResult.Success(0, 0)
     }
 }

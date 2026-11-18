@@ -15,10 +15,11 @@ import dev.fieldnotes.domain.ExperimentAssignment
 import dev.fieldnotes.domain.ExperimentVariant
 import java.io.IOException
 import java.util.UUID
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
 
 private val Context.fieldNotesPreferences by preferencesDataStore(name = "field-notes-settings")
 
@@ -32,8 +33,16 @@ class PreferenceDataStoreRepository(
         // DataStore serializes this transaction, even when multiple screens collect concurrently.
         store.edit { if (it[INSTALLATION] == null) it[INSTALLATION] = installationIds() }
         emitAll(store.data)
-    }.catch { error ->
-        if (error is IOException) emit(emptyPreferences()) else throw error
+    }.retryWhen { error, attempt ->
+        if (error is IOException) {
+            // Fail closed while storage is unavailable, then keep the same collectors live.
+            // A terminal catch would leave Settings/telemetry stuck on defaults after recovery.
+            emit(emptyPreferences())
+            delay((1_000L shl attempt.coerceAtMost(5).toInt()).coerceAtMost(30_000L))
+            true
+        } else {
+            false // Includes cancellation and programming errors; neither should be retried.
+        }
     }.map {
         val installation = it[INSTALLATION]
         val variant = installation?.let(CompactCardsExperiment::assign) ?: ExperimentVariant.CONTROL

@@ -31,7 +31,9 @@ All endpoints require `Authorization: Bearer <token>`. Responses use JSON and `C
 
 This small HTTP/1.0 server uses one request per connection and sends explicit `Connection: close` plus `Content-Length` on every response. This prevents a pooled client from reusing an already closed socket when automatic HTTP retries are disabled; durable write replay remains the repository's responsibility.
 
-`GET /v1/notes` returns a consistent complete snapshot:
+`GET /v1/notes` returns a consistent complete snapshot. The study server admits up to 10,000 note IDs, including retained deletion records. At capacity, edits, deletes and exact replays for existing IDs still work. The server rejects a new ID before writing it.
+
+An older database already above this limit requires a data migration or a paginated client/server protocol before it can sync with the bounded snapshot client.
 
 ```json
 {
@@ -64,12 +66,14 @@ This small HTTP/1.0 server uses one request per connection and sends explicit `C
 | Status | Meaning and client action |
 | --- | --- |
 | `200` | Body is the canonical note. Record the acknowledgment transactionally; do not overwrite a newer local edit. |
-| `400` | Invalid fields, unknown project, invalid ID, or an operation ID reused with another payload. Fix the request; do not retry indefinitely. |
+| `400` | Invalid fields, unknown project, invalid ID, reused operation ID with a different payload, or a new ID beyond capacity. Fix the request or resolve the capacity condition before retrying. |
 | `401` | Missing or invalid token. Keep pending work, ask the user to sign in, then schedule sync again. |
-| `404` | Unknown endpoint, or a nonzero base version for a missing note. Treat as a permanent protocol failure requiring investigation. |
+| `404` | Unknown endpoint, or a nonzero base version for a missing note. The error code indicates whether the server could attribute the rejection to a specific mutation. |
 | `409` | Body is `{"current": <canonical note>}`. Preserve the local change and present a conflict choice. A chosen local version is a new operation based on the returned current version. |
 | `411` / `413` / `415` | Missing length, empty/oversized body, or wrong media type. Fix the request. |
 | `503` | Temporary SQLite failure. Retain pending data and retry with backoff. |
+
+For a definitive mutation rejection, the server returns `400` or `404` with `{"error":"…","code":"mutation_rejected","operationId":"…"}`. Android pauses a note only if the `operationId` matches its queued write, so other notes and snapshot downloads can continue. Authentication, routing, request framing and transient failures omit this marker because they do not establish the outcome of the logical operation. A client preserves the exact queued operation if the response is ambiguous, including an unreadable acknowledgment.
 
 A successful operation and its serialized acknowledgment are stored in the **same SQLite transaction** as the note. Repeating the same operation returns that original acknowledgment even if another edit has since advanced the note. This handles a connection lost after the server commits but before the client receives the response. The client must replay an uncertain write before rebasing later edits. A different payload with the same operation ID fails rather than silently duplicating or changing a write. Conflicts are not recorded as successful operations.
 

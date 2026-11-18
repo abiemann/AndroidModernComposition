@@ -27,6 +27,10 @@
         <item quantity="one">%1$d awaiting sync</item>
         <item quantity="other">%1$d awaiting sync</item>
     </plurals>
+    <plurals name="attention_count">
+        <item quantity="one">%1$d needs review</item>
+        <item quantity="other">%1$d need review</item>
+    </plurals>
     <string name="all_saved">Everything is up to date</string>
     <string name="search_notes">Search notes</string>
     <string name="clear_search">Clear search</string>
@@ -40,7 +44,19 @@
     <string name="note_conflict">Review conflict</string>
     <string name="deletion_conflict">Deletion needs review</string>
     <string name="updated">Updated %1$s</string>
-    <string name="revision">Server revision %1$d</string>
+    <string name="revision">Local revision %1$d</string>
+    <string name="note_rejected">Sync paused · review note</string>
+    <string name="deletion_rejected">Sync paused · review deletion</string>
+    <string name="rejected_heading">Sync needs your attention</string>
+    <string name="rejected_note_body">The server did not accept this note. You can edit it below, or retry after correcting the server problem. Your local version is preserved.</string>
+    <string name="rejected_deletion_body">The server did not accept this deletion. The note stays here for review. Retry after correcting the server problem to synchronize the deletion.</string>
+    <string name="retry_sync">Retry sync</string>
+    <string name="note_load_failed">This note could not be loaded. Try again to check its current state.</string>
+    <string name="editor_load_failed">The editor could not load the note and projects. Your draft is preserved. Retry to continue editing.</string>
+    <string name="stale_draft">This draft can no longer safely replace the original note. Your text is preserved below. Save it as a new note, or load the latest version to start again.</string>
+    <string name="save_as_new">Save as new note</string>
+    <string name="reload_latest">Load latest version</string>
+    <string name="reload_latest_confirmation">Loading the latest version replaces your unsaved draft. To keep this text, cancel and save it as a new note first. If the original is no longer available, your draft will be kept.</string>
     <string name="missing_note">This note is no longer available.</string>
     <string name="conflict_heading">Two versions need your attention</string>
     <string name="conflict_body">The server changed while this device had unsynced edits. Keep this device’s version to retry it against the latest server revision, or replace it with the server version.</string>
@@ -58,9 +74,11 @@
     <string name="sync_auth">Check your server access token in Settings to synchronize.</string>
     <string name="sync_local_network">Allow local network access in Settings to synchronize with your local server. Your notes are saved on this device.</string>
     <string name="sync_offline">Could not connect. Changes are saved locally and queued to retry.</string>
-    <string name="sync_rejected">The server rejected a change. Your local version is preserved.</string>
+    <string name="sync_rejected">Sync could not use the server response. Your changes are preserved. Check the server and try Sync now again.</string>
+    <string name="sync_paused">Some changes need your attention. Open the notes marked as paused to review or retry them.</string>
+    <string name="retry_queued">Change queued for synchronization.</string>
     <string name="note_deleted">Note deleted locally.</string>
-    <string name="conflict_resolved">Conflict resolved. Synchronization is queued.</string>
+    <string name="conflict_resolved">Conflict resolved on this device.</string>
     <string name="settings_heading">Settings</string>
     <string name="settings_description">Preferences for this device.</string>
     <string name="appearance">Appearance</string>

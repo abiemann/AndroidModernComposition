@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
@@ -21,6 +22,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import dev.fieldnotes.MainActivity
 import dev.fieldnotes.R
 import dev.fieldnotes.domain.AnalyticsEvent
@@ -30,6 +32,7 @@ import dev.fieldnotes.domain.SyncResult
 import dev.fieldnotes.domain.SyncScheduler
 import dev.fieldnotes.domain.Telemetry
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 
 class WorkSyncScheduler(private val context: Context, private val demo: Boolean) : SyncScheduler {
@@ -58,17 +61,31 @@ class SyncWorker(
     private val telemetry: Telemetry,
 ) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
-        val outcome = repository.sync()
-        telemetry.record(if (outcome is SyncResult.Success) AnalyticsEvent.SYNC_SUCCEEDED else AnalyticsEvent.SYNC_FAILED)
-        if (outcome is SyncResult.Success && outcome.uploaded > 0 && outcome.conflicts == 0 && preferences.preferences.first().notificationsEnabled) {
-            notifySuccess()
+        val outcome = try {
+            repository.sync()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            Log.w(TAG, "Sync wakeup failed: ${error.javaClass.simpleName}")
+            return finish(WorkDecision.UNEXPECTED_FAILURE)
         }
-        return when (outcome.workDecision(runAttemptCount)) {
-            WorkDecision.SUCCESS -> Result.success()
-            WorkDecision.RETRY -> Result.retry()
-            WorkDecision.FAILURE -> Result.failure()
+        val decision = outcome.workDecision(runAttemptCount)
+        try {
+            telemetry.record(if (decision == WorkDecision.SYNCED || decision == WorkDecision.CONFLICTS)
+                AnalyticsEvent.SYNC_SUCCEEDED else AnalyticsEvent.SYNC_FAILED)
+            if (decision == WorkDecision.SYNCED && outcome is SyncResult.Success && outcome.uploaded > 0 &&
+                preferences.preferences.first().notificationsEnabled) {
+                notifySuccess()
+            }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            Log.w(TAG, "Sync feedback failed: ${error.javaClass.simpleName}")
         }
+        return if (decision == WorkDecision.RETRY) Result.retry() else finish(decision)
     }
+
+    // Failure would fail already-appended jobs, including a recovery requested during this run.
+    // The output describes the application result while the wakeup completes for WorkManager.
+    private fun finish(decision: WorkDecision): Result = Result.success(workDataOf(OUTCOME_KEY to decision.name))
 
     private fun notifySuccess() {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
@@ -80,6 +97,11 @@ class SyncWorker(
             .setContentText(applicationContext.getString(R.string.sync_notification_body)).setContentIntent(pending).setAutoCancel(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build()
         manager.notify(42, notification)
+    }
+
+    internal companion object {
+        const val OUTCOME_KEY = "sync_outcome"
+        private const val TAG = "FieldNotesSync"
     }
 }
 

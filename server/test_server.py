@@ -6,11 +6,14 @@ from concurrent.futures import ThreadPoolExecutor
 import http.client
 import json
 from pathlib import Path
+import socket
+import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
-from fieldnotes_server import FieldNotesServer, Store
+from fieldnotes_server import FieldNotesServer, ProtocolError, Store
 
 TOKEN = "test-only-token-do-not-use-for-deployment"
 
@@ -53,6 +56,13 @@ class ServerTest(unittest.TestCase):
     def put(self, data, note_id="note-1"):
         return self.request("PUT", "/v1/notes/" + note_id, data)
 
+    def assert_mutation_rejected(self, response, expected_status=400, operation_id="op-1"):
+        status, body = response
+        self.assertEqual(expected_status, status)
+        self.assertEqual("mutation_rejected", body.get("code"))
+        self.assertEqual(operation_id, body.get("operationId"))
+        self.assertIsInstance(body.get("error"), str)
+
     def test_empty_snapshot_has_stable_projects(self):
         status, result = self.request()
         self.assertEqual(200, status)
@@ -81,9 +91,22 @@ class ServerTest(unittest.TestCase):
 
     def test_missing_and_invalid_auth_cannot_read_or_write(self):
         for token in (None, "incorrect-token"):
-            self.assertEqual(401, self.request(token=token)[0])
-            self.assertEqual(401, self.request("PUT", "/v1/notes/n", mutation(), token=token)[0])
+            for response in (self.request(token=token),
+                             self.request("PUT", "/v1/notes/n", mutation(), token=token)):
+                self.assertEqual(401, response[0])
+                self.assertNotIn("code", response[1])
         self.assertEqual([], self.request()[1]["notes"])
+
+    def test_general_and_transient_failures_are_not_mutation_rejections(self):
+        for response in (self.request(path="/unknown"), self.request("PUT", "/unknown")):
+            self.assertEqual(404, response[0])
+            self.assertNotIn("code", response[1])
+        with patch.object(self.server.store, "mutate", side_effect=sqlite3.OperationalError("test storage failure")):
+            status, body = self.put(mutation())
+        self.assertEqual(503, status)
+        self.assertNotIn("code", body)
+        self.assertEqual([], self.request()[1]["notes"])
+        self.assertEqual(200, self.put(mutation())[0])
 
     def test_create_edit_delete_and_tombstone_snapshot(self):
         status, created = self.put(mutation())
@@ -103,6 +126,34 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(first, replay)
         self.assertEqual(2, self.request()[1]["notes"][0]["version"])
 
+    def test_committed_replay_precedes_current_semantic_validation(self):
+        first = self.put(mutation())
+        # Tightened validation must not erase the acknowledgment of an earlier write.
+        with patch("fieldnotes_server.validate_mutation", side_effect=ProtocolError(400, "Changed policy")):
+            self.assertEqual(first, self.put(mutation()))
+
+    def test_truncated_retry_does_not_claim_the_original_mutation_was_rejected(self):
+        first = self.put(mutation())
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        body = json.dumps(mutation()).encode()
+        try:
+            connection.request("PUT", "/v1/notes/note-1", body=body[:-5], headers={
+                "Authorization": "Bearer " + TOKEN,
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            })
+            connection.sock.shutdown(socket.SHUT_WR)
+            response = connection.getresponse()
+            result = json.loads(response.read())
+            self.assertEqual(400, response.status)
+            self.assertEqual("Incomplete request body", result["error"])
+            self.assertNotIn("code", result)
+            self.assertNotIn("operationId", result)
+        finally:
+            connection.close()
+        self.assertEqual(first, self.put(mutation()))
+        self.assertEqual([first[1]], self.request()[1]["notes"])
+
     def test_idempotency_survives_store_reopen(self):
         first = self.put(mutation())
         reopened = Store(self.path)
@@ -110,9 +161,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(1, reopened.snapshot()["notes"][0]["version"])
 
     def test_mutation_id_cannot_change_payload_or_note(self):
-        self.put(mutation())
-        self.assertEqual(400, self.put(mutation(title="Altered"))[0])
-        self.assertEqual(400, self.put(mutation(), "note-2")[0])
+        accepted = self.put(mutation())
+        self.assert_mutation_rejected(self.put(mutation(title="Altered")))
+        self.assert_mutation_rejected(self.put(mutation(), "note-2"))
+        # The attempted different payload is rejected; the original acknowledgment survives.
+        self.assertEqual(accepted, self.put(mutation()))
+        self.assertEqual([accepted[1]], self.request()[1]["notes"])
 
     def test_stale_write_returns_current_record_without_overwrite(self):
         _, original = self.put(mutation())
@@ -141,8 +195,47 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(1, self.request()[1]["notes"][0]["version"])
 
     def test_missing_note_with_nonzero_base_is_not_recreated(self):
-        self.assertEqual(404, self.put(mutation(version=5))[0])
+        self.assert_mutation_rejected(self.put(mutation(version=5)), 404)
         self.assertEqual([], self.request()[1]["notes"])
+
+    @patch("fieldnotes_server.MAX_NOTES", 2)
+    def test_capacity_counts_tombstones_but_preserves_updates_and_replays(self):
+        first = self.put(mutation("first"), "one")
+        self.assertEqual(200, first[0])
+        self.assertEqual(200, self.put(mutation("second"), "two")[0])
+        self.assert_mutation_rejected(self.put(mutation("third"), "three"), operation_id="third")
+        with self.server.store.connect() as connection:
+            self.assertEqual(2, connection.execute("SELECT COUNT(*) FROM operations").fetchone()[0])
+
+        self.assertEqual(200, self.put(mutation("edit-one", 1, title="Edited"), "one")[0])
+        status, tombstone = self.put(mutation("delete-two", 1, deleted=True), "two")
+        self.assertEqual(200, status)
+        self.assertTrue(tombstone["deleted"])
+        self.assertEqual(first, self.put(mutation("first"), "one"))
+        self.assert_mutation_rejected(self.put(mutation("third"), "three"), operation_id="third")
+        # A rejected creation does not obstruct an unrelated valid operation.
+        self.assertEqual(200, self.put(mutation("later-edit", 2, title="Later edit"), "one")[0])
+        notes = self.request()[1]["notes"]
+        self.assertEqual(["one", "two"], [note["id"] for note in notes])
+        self.assertEqual(3, notes[0]["version"])
+        self.assertTrue(notes[1]["deleted"])
+
+    @patch("fieldnotes_server.MAX_NOTES", 1)
+    def test_concurrent_creations_cannot_exceed_capacity(self):
+        ready = threading.Barrier(2)
+
+        def create(note_id):
+            ready.wait(timeout=3)
+            return self.put(mutation(note_id), note_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(create, ("one", "two")))
+        self.assertEqual([200, 400], sorted(status for status, _ in results))
+        rejected = next(result for result in results if result[0] == 400)
+        rejected_id = rejected[1]["operationId"]
+        self.assertIn(rejected_id, ("one", "two"))
+        self.assert_mutation_rejected(rejected, operation_id=rejected_id)
+        self.assertEqual(1, len(self.request()[1]["notes"]))
 
     def test_invalid_schema_and_limits_fail_without_mutation(self):
         invalid = [
@@ -155,12 +248,21 @@ class ServerTest(unittest.TestCase):
         ]
         for value in invalid:
             with self.subTest(value=str(value)[:80]):
-                self.assertEqual(400, self.put(value)[0])
+                response = self.put(value)
+                self.assertEqual(400, response[0])
+                if isinstance(value, dict) and value.get("operationId") == "op-1":
+                    self.assert_mutation_rejected(response)
+                else:
+                    self.assertNotIn("code", response[1])
+                    self.assertNotIn("operationId", response[1])
         self.assertEqual([], self.request()[1]["notes"])
 
     def test_malformed_json_is_rejected(self):
         for body in (b"{", b"\xff", b'{"value": NaN}'):
-            self.assertEqual(400, self.request("PUT", "/v1/notes/n", raw=body)[0])
+            status, result = self.request("PUT", "/v1/notes/n", raw=body)
+            self.assertEqual(400, status)
+            self.assertNotIn("code", result)
+            self.assertNotIn("operationId", result)
 
     def test_unicode_limits_match_android_utf16_code_units(self):
         self.assertEqual(200, self.put(mutation(title="🌿" * 60, body="🌿" * 5_000))[0])
@@ -170,10 +272,12 @@ class ServerTest(unittest.TestCase):
 
     def test_oversize_body_and_wrong_media_type_are_rejected(self):
         # Reject from headers before allocating or reading an oversized payload.
-        self.assertEqual(413, self.request("PUT", "/v1/notes/n", raw=b"",
-                                         headers={"Content-Length": "65537"})[0])
-        self.assertEqual(415, self.request("PUT", "/v1/notes/n", mutation(),
-                                         headers={"Content-Type": "text/plain"})[0])
+        oversized = self.request("PUT", "/v1/notes/n", raw=b"", headers={"Content-Length": "65537"})
+        wrong_media = self.request("PUT", "/v1/notes/n", mutation(), headers={"Content-Type": "text/plain"})
+        for response, expected_status in ((oversized, 413), (wrong_media, 415)):
+            self.assertEqual(expected_status, response[0])
+            self.assertNotIn("code", response[1])
+            self.assertNotIn("operationId", response[1])
 
     def test_paths_are_strict_and_cannot_be_injected(self):
         self.assertEqual(404, self.request(path="/v1/notes?unexpected=1")[0])

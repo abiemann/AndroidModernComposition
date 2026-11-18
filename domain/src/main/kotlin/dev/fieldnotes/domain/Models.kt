@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.Flow
 
 data class Project(val id: String, val name: String)
 
-enum class SyncState { PENDING, SYNCED, CONFLICT }
+enum class SyncState { PENDING, SYNCED, CONFLICT, REJECTED }
 
 data class Note(
     val id: String,
@@ -17,10 +17,19 @@ data class Note(
     val deleted: Boolean = false,
 )
 
-data class NoteDraft(val id: String? = null, val projectId: String, val title: String, val body: String)
+data class NoteDraft(
+    val id: String? = null,
+    val projectId: String,
+    val title: String,
+    val body: String,
+    val expectedRevision: Long? = null,
+)
+
+/** The saved note changed or disappeared after the editor read it; keep the user's draft. */
+class StaleNoteEdit : Exception()
 
 sealed interface SyncResult {
-    data class Success(val uploaded: Int, val conflicts: Int) : SyncResult
+    data class Success(val uploaded: Int, val conflicts: Int, val rejected: Int = 0) : SyncResult
     data object AuthenticationRequired : SyncResult
     data object PermissionRequired : SyncResult
     data object RetryableFailure : SyncResult
@@ -34,6 +43,8 @@ interface NoteRepository {
     suspend fun save(draft: NoteDraft): String
     suspend fun delete(id: String)
     suspend fun resolveConflict(id: String, keepLocal: Boolean)
+    /** Retry the retained latest snapshot after a definitive rejection, including deletion tombstones. */
+    suspend fun retryRejected(id: String)
     suspend fun sync(): SyncResult
 }
 

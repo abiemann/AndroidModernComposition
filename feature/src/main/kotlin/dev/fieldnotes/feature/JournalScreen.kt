@@ -49,7 +49,7 @@ fun JournalScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
                     Text(stringResource(R.string.journal), style = MaterialTheme.typography.headlineMedium,
                         modifier = Modifier.semantics { heading() })
-                    if (!state.loading && !state.loadFailed) JournalSummary(state.totalCount, state.pendingCount)
+                    if (!state.loading && !state.loadFailed) JournalSummary(state.totalCount, state.pendingCount, state.attentionCount)
                     if (showControls) {
                         OutlinedTextField(
                             value = state.query, onValueChange = onSearch,
@@ -97,22 +97,26 @@ fun JournalScreen(
 }
 
 @Composable
-private fun JournalSummary(total: Int, pending: Int) {
+private fun JournalSummary(total: Int, pending: Int, attention: Int) {
     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium),
         verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Small),
         itemVerticalAlignment = Alignment.CenterVertically) {
         Text(pluralStringResource(R.plurals.notes_count, total, total), style = MaterialTheme.typography.labelLarge)
-        SyncSummary(pending)
+        SyncSummary(pending, attention)
     }
 }
 
 @Composable
-private fun SyncSummary(pending: Int) {
+private fun SyncSummary(pending: Int, attention: Int = 0) {
     Row(verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.IconGap)) {
-        Icon(if (pending > 0) Icons.Outlined.Schedule else Icons.Outlined.CloudDone, null,
+        Icon(when { attention > 0 -> Icons.Outlined.WarningAmber; pending > 0 -> Icons.Outlined.Schedule; else -> Icons.Outlined.CloudDone }, null,
             Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(if (pending > 0) pluralStringResource(R.plurals.pending_count, pending, pending) else stringResource(R.string.all_saved),
+        Text(when {
+            attention > 0 -> pluralStringResource(R.plurals.attention_count, attention, attention)
+            pending > 0 -> pluralStringResource(R.plurals.pending_count, pending, pending)
+            else -> stringResource(R.string.all_saved)
+        },
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -176,9 +180,10 @@ internal fun SyncBadge(note: Note) {
         SyncState.SYNCED -> Icons.Outlined.CheckCircle to R.string.note_saved
         SyncState.PENDING -> Icons.Outlined.Schedule to R.string.note_pending
         SyncState.CONFLICT -> Icons.Outlined.WarningAmber to if (note.deleted) R.string.deletion_conflict else R.string.note_conflict
+        SyncState.REJECTED -> Icons.Outlined.ErrorOutline to if (note.deleted) R.string.deletion_rejected else R.string.note_rejected
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(icon, null, Modifier.size(16.dp), tint = if (note.syncState == SyncState.CONFLICT)
+        Icon(icon, null, Modifier.size(16.dp), tint = if (note.syncState == SyncState.CONFLICT || note.syncState == SyncState.REJECTED)
             MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
         Text(stringResource(label), style = MaterialTheme.typography.labelMedium)
     }

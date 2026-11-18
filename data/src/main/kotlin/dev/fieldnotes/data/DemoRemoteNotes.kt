@@ -16,12 +16,12 @@ class DemoRemoteNotes(private val database: FieldNotesDatabase) : RemoteNotes {
     override suspend fun push(id: String, mutation: Mutation): PushResult = database.withTransaction {
         val requestJson = gson.toJson(mapOf("id" to id, "mutation" to mutation))
         dao.demoOperation(mutation.operationId)?.let {
-            if (it.requestJson != requestJson) throw RejectedRequest()
+            if (it.requestJson != requestJson) return@withTransaction PushResult.Rejected
             return@withTransaction PushResult.Accepted(gson.fromJson(it.responseJson, RemoteNote::class.java))
         }
         val current = dao.demoNote(id)?.let { gson.fromJson(it.remoteJson, RemoteNote::class.java) }
         if (current != null && current.version != mutation.baseVersion) return@withTransaction PushResult.Conflict(current)
-        if (current == null && mutation.baseVersion != 0L) throw RejectedRequest()
+        if (current == null && mutation.baseVersion != 0L) return@withTransaction PushResult.Rejected
         val note = RemoteNote(id, mutation.projectId, mutation.title, mutation.body, mutation.updatedAt,
             (current?.version ?: 0) + 1, mutation.deleted)
         val responseJson = gson.toJson(note)

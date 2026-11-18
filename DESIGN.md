@@ -25,26 +25,29 @@ This is MVVM with a unidirectional state cycle: the UI sends actions, the ViewMo
 
 All journal reads come from Room flows. A network response does not become a second UI source of truth. The ViewModels use `StateFlow` and lifecycle-aware Compose collection; `WhileSubscribed` stops unnecessary observation when consumers leave. Search and project selection, and an unfinished editor draft, use `SavedStateHandle`. Saved state supports ordinary Android recreation/process restoration; it is not a durable replacement for pressing Save, and Android does not promise restoration after force-stop or clearing app data.
 
-`SaveNote` trims and validates title/body/project, asks the repository to commit locally, then requests background synchronization and records a content-free event. The repository validates again at its write boundary so an import or another client cannot bypass the policy. A transaction writes the note and its immutable outbox snapshot together. The screen can therefore immediately show the committed local value even when no network is available.
+Preferences emit safe defaults during a storage I/O failure and retry with bounded backoff. Active collectors can receive persisted settings again when storage recovers. The editor retains its draft across failed loads, and the detail screen gives read errors a retry action distinct from the missing-note state.
+
+`SaveNote` trims and validates title/body/project, asks the repository to commit locally, then requests background synchronization and records a content-free event. The repository validates again at its write boundary so an import or another client cannot bypass the policy. A transaction checks the edit's expected local revision and writes the note with its outbox snapshot. The screen can show the committed value immediately, including offline. A scheduling error after a committed save, delete, or conflict resolution leaves the successful local change intact. Startup and periodic work can pick it up later.
 
 Projects and notes form a foreign-key relationship. Outbox sequence determines upload ordering; operation IDs are unique. The version-1-to-2 migration adds the note ordering index and preserves existing notes and queued mutations. Exported Room schemas and a migration test make that contract reviewable. There is no destructive-migration fallback.
 
 ## Synchronization invariants
 
-1. Each distinct local edit creates an immutable queued mutation with a unique operation ID.
+1. An editor keeps the local revision it loaded, including when Android restores its draft. If the stored revision changes or the note is deleted before Save, the transaction rejects the stale edit and the editor keeps the draft. Each accepted local edit creates an immutable queued mutation with a unique operation ID.
 2. A retry after an unknown outcome sends the same operation ID and logical payload. The server transaction stores both the change and the successful acknowledgment, so replay returns the original result.
 3. Local revision and server version are separate. An acknowledgment for revision N must not overwrite an edit made at revision N+1 during the network request.
 4. Only after an operation is acknowledged can its queued successors be rebased on the returned server version. Do not rewrite an uncertain in-flight operation to “make it current.”
 5. A stale server version produces a conflict containing the remote value. Keep the local copy and require an explicit keep-local or use-server decision.
-6. Deletion is a queued tombstone. A deletion conflict remains discoverable until it is resolved.
-7. Pulling a snapshot must not overwrite pending/conflicted local work. Room stays authoritative for the UI.
-8. Coroutine cancellation is propagated. It is never converted into successful synchronization or a user-facing generic failure.
+6. Deletion is a queued tombstone. Conflicted and rejected deletions stay visible for recovery.
+7. A definitive, operation-scoped rejection marks that note's chain as paused. Other notes and snapshot downloads can proceed. Editing or explicitly retrying the rejected note creates a fresh mutation from its latest local content. Ambiguous responses leave the original operation and its payload intact for replay.
+8. Pulling a snapshot must preserve pending, conflicted, and rejected local work. Room stays authoritative for the UI.
+9. Coroutine cancellation is propagated. It is never converted into successful synchronization or a user-facing generic failure.
 
 The repository serializes synchronization with a mutex while allowing local edits during network I/O. Database transactions are short and do not span HTTP calls. The demo remote implements the same protocol with separate persistent tables; the [Python server](server/fieldnotes_server.py) uses SQLite transactions for the real HTTP path. See [API](docs/API.md) for exact request and failure semantics.
 
 ## Platform work and resource use
 
-WorkManager is appropriate for deferrable synchronization and handles process restart, constraints, and scheduling through Android platform services. The worker requests a connected network for the local HTTP flavor and avoids low-battery execution. The demo has no network constraint. A named periodic request supplies eventual recovery; named one-shot requests use append-or-replace semantics to avoid losing an edit that arrives just as another worker finishes. Transient failures use exponential backoff with a bounded retry policy; authentication, denied local-network permission, and rejected requests wait for corrective action.
+WorkManager is appropriate for deferrable synchronization and handles process restart, constraints, and scheduling through Android platform services. The worker requests a connected network for the local HTTP flavor and avoids low-battery execution. The demo has no network constraint. A named periodic request supplies eventual recovery. Named one-shot requests use append-or-replace semantics to capture edits that arrive as a worker finishes. Transient failures use exponential backoff with a bounded retry policy. Terminal application outcomes finish the WorkManager wakeup and carry an explicit outcome in its output, so a queued recovery can still run after an older request needs authentication, permission, or other corrective action.
 
 There is intentionally no always-running service. A foreground service would need a user-visible long-running task, a declared service type, a notification, and current platform restrictions. Adding one merely to keep this journal alive would teach the wrong execution model.
 
@@ -69,6 +72,8 @@ The local server token is an opaque bearer credential. The UI does not own decry
 Room notebook contents are app-private but not separately encrypted. Sign-out removes the credential, not the notebook. The sample has no user-switching model and cannot claim account isolation. [Production](docs/PRODUCTION.md) lists the changes required before using sensitive or multi-user data.
 
 Diagnostics are opt-in and local. The telemetry interface accepts typed events, not arbitrary strings containing note text or tokens. Local counters and crash exception type demonstrate instrumentation and consent. The compact-card experiment allocates installations to control/compact arms using a versioned SHA-256 hash of a randomly generated local installation ID persisted in DataStore. The ID is not transmitted or logged. A user can explicitly override the assigned layout and reset the override; overridden observations are excluded from arm-level metrics. Consent-gated local exposure and note-save counters demonstrate the measurement boundary. There is no configured Crashlytics/Sentry service, remote alerting, remote experiment rollout, or evidence of improved product outcomes.
+
+Applying a preference snapshot advances an in-memory revision under the diagnostics lock. If that revision changes while an exposure reads preferences, the exposure reads again. This prevents an older read from restoring consent after an observed opt-out has cleared the counters.
 
 ## Testing boundaries
 

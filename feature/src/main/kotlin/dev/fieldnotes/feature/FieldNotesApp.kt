@@ -141,20 +141,29 @@ fun FieldNotesApp(environmentName: String = "Demo", onOpenLegacy: () -> Unit = {
                                 val id = noteEntry.arguments?.getString("noteId").orEmpty()
                                 NoteScreen(
                                     note = state.allNotes.firstOrNull { it.id == id }, projects = state.projects,
-                                    loading = state.loading,
+                                    loading = state.loading, loadFailed = state.loadFailed,
                                     onEdit = { nav.navigate("edit/${Uri.encode(id)}") },
                                     onDelete = { journal.delete(id); nav.popBackStack() },
                                     onResolve = { keepLocal -> journal.resolveConflict(id, keepLocal) },
+                                    onRetryLoad = journal::retry, onRetrySync = { journal.retryRejected(id) },
                                 )
                             }
-                            composable("edit/{noteId}", arguments = listOf(navArgument("noteId") { type = NavType.StringType })) {
+                            composable("edit/{noteId}", arguments = listOf(navArgument("noteId") { type = NavType.StringType })) { editorEntry ->
                                 val editor: EditorViewModel = koinViewModel()
                                 val editorState by editor.state.collectAsStateWithLifecycle()
                                 LaunchedEffect(editorState.savedId) {
-                                    if (editorState.savedId != null) nav.popBackStack()
+                                    val savedId = editorState.savedId
+                                    if (savedId != null) {
+                                        val originalId = editorEntry.arguments?.getString("noteId")
+                                        if (originalId != "new" && originalId != savedId) {
+                                            nav.navigate("note/${Uri.encode(savedId)}") {
+                                                popUpTo("journal")
+                                            }
+                                        } else nav.popBackStack()
+                                    }
                                 }
                                 EditorScreen(editorState, editor::title, editor::body, editor::project,
-                                    editor::save, editor::load)
+                                    editor::save, editor::load, editor::saveAsNew, editor::reloadLatest)
                             }
                             composable("settings") {
                                 val settings: SettingsViewModel = koinViewModel()
@@ -176,6 +185,8 @@ private fun Feedback.messageResource() = when (this) {
     Feedback.LOCAL_NETWORK -> R.string.sync_local_network
     Feedback.OFFLINE -> R.string.sync_offline
     Feedback.REJECTED -> R.string.sync_rejected
+    Feedback.PAUSED -> R.string.sync_paused
+    Feedback.RETRY_QUEUED -> R.string.retry_queued
     Feedback.FAILED -> R.string.operation_failed
     Feedback.DELETED -> R.string.note_deleted
     Feedback.RESOLVED -> R.string.conflict_resolved
