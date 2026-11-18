@@ -9,6 +9,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,8 +54,8 @@ fun FieldNotesApp(environmentName: String = "Demo", onOpenLegacy: () -> Unit = {
                 restoreState = true
             }
         }
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val expanded = maxWidth >= 840.dp
+        val expanded = LocalWindowInfo.current.containerDpSize.width >= 840.dp
+        Box(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxSize()) {
                 if (expanded) {
                     NavigationRail(Modifier.fillMaxHeight(), containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
@@ -133,14 +134,14 @@ fun FieldNotesApp(environmentName: String = "Demo", onOpenLegacy: () -> Unit = {
                                         }
                                     }
                                 }
-                                JournalScreen(state, journal::search, journal::filter,
+                                JournalScreen(state, journal.searchQuery, journal::filter,
                                     onOpen = { nav.navigate("note/${Uri.encode(it)}") },
                                     onCreate = { nav.navigate("edit/new") }, onRetry = journal::retry)
                             }
                             composable("note/{noteId}", arguments = listOf(navArgument("noteId") { type = NavType.StringType })) { noteEntry ->
                                 val id = noteEntry.arguments?.getString("noteId").orEmpty()
                                 NoteScreen(
-                                    note = state.allNotes.firstOrNull { it.id == id }, projects = state.projects,
+                                    note = state.notesById[id], projects = state.projects,
                                     loading = state.loading, loadFailed = state.loadFailed,
                                     onEdit = { nav.navigate("edit/${Uri.encode(id)}") },
                                     onDelete = { journal.delete(id); nav.popBackStack() },
@@ -162,7 +163,7 @@ fun FieldNotesApp(environmentName: String = "Demo", onOpenLegacy: () -> Unit = {
                                         } else nav.popBackStack()
                                     }
                                 }
-                                EditorScreen(editorState, editor::title, editor::body, editor::project,
+                                EditorScreen(editorState, editor.title, editor.body, editor::project,
                                     editor::save, editor::load, editor::saveAsNew, editor::reloadLatest)
                             }
                             composable("settings") {
@@ -187,6 +188,11 @@ private fun Feedback.messageResource() = when (this) {
     Feedback.REJECTED -> R.string.sync_rejected
     Feedback.PAUSED -> R.string.sync_paused
     Feedback.RETRY_QUEUED -> R.string.retry_queued
+    Feedback.CONTINUING -> R.string.sync_continuing
+    Feedback.DEFERRED -> R.string.sync_deferred
+    Feedback.RETRY_NOT_SCHEDULED -> R.string.sync_retry_not_scheduled
+    Feedback.TIMED_OUT -> R.string.sync_timed_out
+    Feedback.TIMED_OUT_QUEUED -> R.string.sync_timed_out_queued
     Feedback.FAILED -> R.string.operation_failed
     Feedback.DELETED -> R.string.note_deleted
     Feedback.RESOLVED -> R.string.conflict_resolved

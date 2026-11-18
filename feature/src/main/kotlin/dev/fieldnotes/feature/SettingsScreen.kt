@@ -118,10 +118,14 @@ internal fun SettingsRoute(viewModel: SettingsViewModel, environmentName: String
             if (localServer) {
                 SettingsGroup(stringResource(R.string.session)) {
                     Text(stringResource(R.string.environment, environmentName), style = MaterialTheme.typography.labelLarge)
-                    Text(stringResource(if (state.signedIn) R.string.session_connected else R.string.session_disconnected))
-                    if (state.signedIn) {
+                    Text(stringResource(when (state.signedIn) {
+                        null -> R.string.session_loading
+                        true -> R.string.session_connected
+                        false -> R.string.session_disconnected
+                    }))
+                    if (state.signedIn == true) {
                         OutlinedButton(onClick = viewModel::signOut) { Text(stringResource(R.string.disconnect)) }
-                    } else {
+                    } else if (state.signedIn == false) {
                         OutlinedTextField(value = token, onValueChange = { token = it }, modifier = Modifier.fillMaxWidth(),
                             label = { Text(stringResource(R.string.token_label)) }, singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),

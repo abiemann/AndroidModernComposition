@@ -60,7 +60,7 @@ These results describe the suite before the testing-scope change. Six UI tests i
 
 - [ ] Provide a hosted HTTPS service and external identity provider with account isolation, token rotation/expiry/revocation, and secure user switching.
 - [ ] Decide notebook encryption, user deletion/export, retention, backup/restore, and privacy policy from a concrete threat model.
-- [ ] Replace full snapshots/unbounded operation history with measured scalable sync and retention, preserving replay correctness.
+- [ ] Replace full snapshots with a measured incremental protocol and define HTTP-server replay retention that preserves client recovery.
 - [ ] Configure a consent-aware crash/analytics provider, release mapping uploads, actionable alerting, dashboards, and support ownership.
 - [ ] Extend the local A/B allocation/measurement lab with a governed remote rollout and analysis process before claiming product improvement.
 - [ ] Configure release signing, protected CI secrets/environments, Play Console app/content declarations, staged rollout, rollback response, and actual distribution.

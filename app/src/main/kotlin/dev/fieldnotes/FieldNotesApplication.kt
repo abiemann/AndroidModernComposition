@@ -2,6 +2,7 @@ package dev.fieldnotes
 
 import android.app.Application
 import android.os.StrictMode
+import android.util.Log
 import androidx.work.Configuration
 import dev.fieldnotes.data.DemoRemoteNotes
 import dev.fieldnotes.data.FieldNotesDatabase
@@ -21,6 +22,7 @@ import dev.fieldnotes.sync.SyncWorkerFactory
 import dev.fieldnotes.sync.WorkSyncScheduler
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -43,7 +45,6 @@ class FieldNotesApplication : Application(), Configuration.Provider {
         dependencies = startKoin {
             androidContext(this@FieldNotesApplication)
             modules(module {
-                single<CoroutineScope> { applicationScope }
                 single<Clock> { Clock(System::currentTimeMillis) }
                 single<IdGenerator> { IdGenerator { UUID.randomUUID().toString() } }
                 single { FieldNotesDatabase.create(get()) }
@@ -56,8 +57,8 @@ class FieldNotesApplication : Application(), Configuration.Provider {
                 single<PreferencesRepository> { PreferenceDataStoreRepository(get<android.content.Context>()) }
                 single { WorkSyncScheduler(get(), BuildConfig.DEMO) }
                 single<SyncScheduler> { get<WorkSyncScheduler>() }
-                single<SessionRepository> { LocalSessionRepository(get(), get(), get()) }
-                single { LocalTelemetry(get(), get(), get()) }
+                single<SessionRepository> { LocalSessionRepository(get(), get(), applicationScope) }
+                single { LocalTelemetry(get(), get(), applicationScope) }
                 single<Telemetry> { get<LocalTelemetry>() }
                 factory { SaveNote(get(), get(), get()) }
                 viewModel { JournalViewModel(get(), get(), get(), get(), get()) }
@@ -67,13 +68,20 @@ class FieldNotesApplication : Application(), Configuration.Provider {
         }.koin
         applicationScope.launch(Dispatchers.IO) {
             dependencies.get<LocalTelemetry>().installCrashHandler()
-            dependencies.get<WorkSyncScheduler>().schedulePeriodic()
-            dependencies.get<WorkSyncScheduler>().requestSync()
+        }
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                dependencies.get<WorkSyncScheduler>().initialize()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.w("FieldNotesSync", "Could not initialize sync scheduling: ${error.javaClass.simpleName}")
+            }
         }
     }
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(SyncWorkerFactory(
             repository = { dependencies.get() }, preferences = { dependencies.get() }, telemetry = { dependencies.get() },
+            scheduler = { dependencies.get() },
         )).build()
 }

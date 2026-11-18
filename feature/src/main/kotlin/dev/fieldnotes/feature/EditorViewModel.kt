@@ -1,5 +1,6 @@
 package dev.fieldnotes.feature
 
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,8 +12,6 @@ import kotlinx.coroutines.launch
 
 data class EditorUiState(
     val editing: Boolean = false,
-    val title: String = "",
-    val body: String = "",
     val projectId: String = "",
     val projects: List<Project> = emptyList(),
     val loading: Boolean = true,
@@ -23,6 +22,7 @@ data class EditorUiState(
     val stale: Boolean = false,
     val latestUnavailable: Boolean = false,
     val missing: Boolean = false,
+    val unrecognized: Boolean = false,
     val savedId: String? = null,
 )
 
@@ -32,10 +32,12 @@ class EditorViewModel(
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
     private val noteId = savedStateHandle.get<String>("noteId")?.takeUnless { it == "new" }
+    private val restoredDraft = savedStateHandle.get<Boolean>("initialized") == true ||
+        savedStateHandle.contains("title") || savedStateHandle.contains("body")
+    val title = savedStateHandle.textFieldState("titleBuffer", "title")
+    val body = savedStateHandle.textFieldState("bodyBuffer", "body")
     private val _state = MutableStateFlow(EditorUiState(
         editing = noteId != null,
-        title = savedStateHandle["title"] ?: "",
-        body = savedStateHandle["body"] ?: "",
         projectId = savedStateHandle["projectId"] ?: "",
     ))
     val state = _state.asStateFlow()
@@ -56,16 +58,20 @@ class EditorViewModel(
             try {
                 val projects = repository.observeProjects().first()
                 val existing = noteId?.let { repository.observeNote(it).first() }
-                val hasDraft = savedStateHandle.get<Boolean>("initialized") == true ||
-                    savedStateHandle.contains("title") || savedStateHandle.contains("body")
+                val hasDraft = restoredDraft || savedStateHandle.get<Boolean>("initialized") == true ||
+                    title.text.isNotEmpty() || body.text.isNotEmpty()
+                if (existing?.syncState == SyncState.UNRECOGNIZED) {
+                    _state.update { it.copy(loading = false, projects = projects, unrecognized = true) }
+                    return@launch
+                }
                 if (noteId != null && (existing == null || existing.deleted)) {
                     _state.update { it.copy(loading = false, projects = projects,
                         missing = !hasDraft, stale = hasDraft, latestUnavailable = true) }
                     return@launch
                 }
                 if (replaceDraft || !hasDraft) {
-                    savedStateHandle["title"] = existing?.title ?: ""
-                    savedStateHandle["body"] = existing?.body ?: ""
+                    title.setTextAndPlaceCursorAtEnd(existing?.title.orEmpty())
+                    body.setTextAndPlaceCursorAtEnd(existing?.body.orEmpty())
                     savedStateHandle["projectId"] = existing?.projectId ?: projects.firstOrNull()?.id.orEmpty()
                     savedStateHandle["expectedRevision"] = existing?.revision
                 } else if (!savedStateHandle.contains("projectId")) {
@@ -76,11 +82,9 @@ class EditorViewModel(
                 // to yesterday's text; require an explicit reload or save-as-new decision.
                 val stale = noteId != null && savedStateHandle.get<Long>("expectedRevision") != existing?.revision
                 _state.update { it.copy(
-                    title = savedStateHandle["title"] ?: "",
-                    body = savedStateHandle["body"] ?: "",
                     projectId = savedStateHandle["projectId"] ?: "",
                     projects = projects, loading = false, loadFailed = false, missing = false,
-                    stale = stale, failed = false, latestUnavailable = false,
+                    stale = stale, failed = false, latestUnavailable = false, unrecognized = false,
                 ) }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -89,14 +93,6 @@ class EditorViewModel(
         }
     }
 
-    fun title(value: String) {
-        savedStateHandle["title"] = value
-        _state.update { it.copy(title = value, validation = null, failed = false) }
-    }
-    fun body(value: String) {
-        savedStateHandle["body"] = value
-        _state.update { it.copy(body = value, validation = null, failed = false) }
-    }
     fun project(id: String) {
         savedStateHandle["projectId"] = id
         _state.update { it.copy(projectId = id, validation = null) }
@@ -106,13 +102,14 @@ class EditorViewModel(
 
     private fun saveDraft(asNew: Boolean) {
         val snapshot = _state.value
-        if (snapshot.loading || snapshot.loadFailed || snapshot.saving || snapshot.missing ||
+        if (snapshot.loading || snapshot.loadFailed || snapshot.saving || snapshot.missing || snapshot.unrecognized ||
             snapshot.savedId != null || (snapshot.stale && !asNew)) return
+        val draft = NoteDraft(if (asNew) null else noteId, snapshot.projectId, title.text.toString(), body.text.toString(),
+            expectedRevision = if (asNew) null else savedStateHandle["expectedRevision"])
         _state.update { it.copy(saving = true, validation = null, failed = false) }
         viewModelScope.launch {
             try {
-                val id = saveNote(NoteDraft(if (asNew) null else noteId, snapshot.projectId, snapshot.title, snapshot.body,
-                    expectedRevision = if (asNew) null else savedStateHandle["expectedRevision"]))
+                val id = saveNote(draft)
                 _state.update { it.copy(saving = false, savedId = id) }
             } catch (_: StaleNoteEdit) {
                 _state.update { it.copy(saving = false, stale = true) }

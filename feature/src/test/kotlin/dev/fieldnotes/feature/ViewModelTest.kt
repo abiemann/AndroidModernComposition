@@ -1,7 +1,14 @@
 package dev.fieldnotes.feature
 
+import android.annotation.SuppressLint
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.SavedStateHandle
 import dev.fieldnotes.domain.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -11,7 +18,12 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], manifest = Config.NONE)
 @OptIn(ExperimentalCoroutinesApi::class)
 class ViewModelTest {
     private val dispatcher = StandardTestDispatcher()
@@ -19,8 +31,17 @@ class ViewModelTest {
     private lateinit var settings: FakePreferences
     private var schedules = 0
     private var scheduleFails = false
-    private val scheduler = SyncScheduler { schedules++; if (scheduleFails) error("scheduler unavailable") }
-    private val telemetry = object : Telemetry { override fun record(event: AnalyticsEvent) = Unit }
+    private var scheduleDelayMillis = 0L
+    private val backgroundFailures = MutableStateFlow(false)
+    private val scheduler = object : SyncScheduler {
+        override val backgroundSyncFailed = backgroundFailures
+        override suspend fun requestSync() {
+            schedules++
+            delay(scheduleDelayMillis)
+            if (scheduleFails) error("scheduler unavailable")
+        }
+    }
+    private val telemetry = RecordingTelemetry()
 
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
@@ -28,21 +49,28 @@ class ViewModelTest {
         settings = FakePreferences()
         schedules = 0
         scheduleFails = false
+        scheduleDelayMillis = 0
+        backgroundFailures.value = false
     }
     @After fun tearDown() { Dispatchers.resetMain() }
 
     private fun editor(handle: SavedStateHandle = SavedStateHandle()) =
         EditorViewModel(repository, SaveNote(repository, scheduler, telemetry), handle)
 
+    // Drive the same saved-state provider that an owner calls at process-state capture.
+    @SuppressLint("RestrictedApi")
+    private fun restoredHandle(handle: SavedStateHandle): SavedStateHandle =
+        SavedStateHandle.createHandle(handle.savedStateProvider().saveState(), null)
+
     @Test fun `blank title stays in editor and never reaches storage`() = runTest(dispatcher) {
         val vm = editor()
         runCurrent()
-        vm.title("   ")
-        vm.body("An unsaved observation")
+        vm.title.setTextAndPlaceCursorAtEnd("   ")
+        vm.body.setTextAndPlaceCursorAtEnd("An unsaved observation")
         vm.save()
         runCurrent()
         assertEquals(InvalidNote.Reason.TITLE_REQUIRED, vm.state.value.validation)
-        assertEquals("An unsaved observation", vm.state.value.body)
+        assertEquals("An unsaved observation", vm.body.text.toString())
         assertNull(vm.state.value.savedId)
         assertEquals(0, repository.saves)
         assertEquals(0, schedules)
@@ -51,8 +79,8 @@ class ViewModelTest {
     @Test fun `valid save normalizes input and schedules durable sync`() = runTest(dispatcher) {
         val vm = editor()
         runCurrent()
-        vm.title("  Meadow  ")
-        vm.body("  First flowers  ")
+        vm.title.setTextAndPlaceCursorAtEnd("  Meadow  ")
+        vm.body.setTextAndPlaceCursorAtEnd("  First flowers  ")
         vm.save()
         runCurrent()
         assertEquals("note-1", vm.state.value.savedId)
@@ -66,9 +94,9 @@ class ViewModelTest {
         val vm = editor(SavedStateHandle(mapOf("noteId" to "existing-note")))
         runCurrent()
         assertTrue(vm.state.value.editing)
-        assertEquals("Original", vm.state.value.title)
-        vm.title("Revised observation")
-        vm.body("Additional details")
+        assertEquals("Original", vm.title.text.toString())
+        vm.title.setTextAndPlaceCursorAtEnd("Revised observation")
+        vm.body.setTextAndPlaceCursorAtEnd("Additional details")
         vm.project("study")
         vm.save()
         runCurrent()
@@ -84,31 +112,64 @@ class ViewModelTest {
         val handle = SavedStateHandle(mapOf("noteId" to "a"))
         val vm = editor(handle)
         runCurrent()
-        vm.title("In progress")
-        vm.body("Do not lose this")
+        vm.title.setTextAndPlaceCursorAtEnd("In progress")
+        vm.body.setTextAndPlaceCursorAtEnd("Do not lose this")
+        vm.title.edit { selection = TextRange(2, 6) }
         vm.project("study")
 
-        val restoredHandle = SavedStateHandle(handle.keys().associateWith { handle.get<Any?>(it) })
+        val restoredHandle = restoredHandle(handle)
         val restored = editor(restoredHandle)
         runCurrent()
-        assertEquals("In progress", restored.state.value.title)
-        assertEquals("Do not lose this", restored.state.value.body)
+        assertEquals("In progress", restored.title.text.toString())
+        assertEquals("Do not lose this", restored.body.text.toString())
         assertEquals("study", restored.state.value.projectId)
+        assertEquals(TextRange(2, 6), restored.title.selection)
         assertTrue(restored.state.value.editing)
         assertFalse(restored.state.value.loading)
         assertEquals(0, repository.saves)
+    }
+
+    @Test fun `saved empty buffers before first load do not masquerade as a stale draft`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Stored title", "field").copy(body = "Stored body", revision = 8))
+        val handle = SavedStateHandle(mapOf("noteId" to "a"))
+        editor(handle) // Its load coroutine has not run when state is captured.
+        val restored = editor(restoredHandle(handle))
+        runCurrent()
+        assertFalse(restored.state.value.stale)
+        assertEquals("Stored title", restored.title.text.toString())
+        assertEquals("Stored body", restored.body.text.toString())
+        restored.save()
+        runCurrent()
+        assertEquals(8L, repository.lastDraft?.expectedRevision)
+    }
+
+    @Test fun `unsupported saved state prevents editor mutations and keeps tombstones visible`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("unknown", "Preserved", "field")
+            .copy(syncState = SyncState.UNRECOGNIZED, deleted = true))
+        val vm = editor(SavedStateHandle(mapOf("noteId" to "unknown")))
+        runCurrent()
+        assertTrue(vm.state.value.unrecognized)
+        vm.save()
+        vm.saveAsNew()
+        runCurrent()
+        assertEquals(0, repository.saves)
+        val journal = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { journal.state.collect() }
+        runCurrent()
+        assertEquals("unknown", journal.state.value.notes.single().id)
+        assertEquals(1, journal.state.value.attentionCount)
     }
 
     @Test fun `save failure keeps fields and allows retry`() = runTest(dispatcher) {
         repository.failSave = true
         val vm = editor()
         runCurrent()
-        vm.title("Useful observation")
+        vm.title.setTextAndPlaceCursorAtEnd("Useful observation")
         vm.save()
         runCurrent()
         assertTrue(vm.state.value.failed)
         assertFalse(vm.state.value.saving)
-        assertEquals("Useful observation", vm.state.value.title)
+        assertEquals("Useful observation", vm.title.text.toString())
         assertNull(vm.state.value.savedId)
         repository.failSave = false
         vm.save()
@@ -120,16 +181,16 @@ class ViewModelTest {
         repository.notes.value = listOf(note("a", "Original", "field").copy(revision = 4))
         val vm = editor(SavedStateHandle(mapOf("noteId" to "a")))
         runCurrent()
-        vm.title("My unsaved work")
-        vm.body("Keep these details")
+        vm.title.setTextAndPlaceCursorAtEnd("My unsaved work")
+        vm.body.setTextAndPlaceCursorAtEnd("Keep these details")
         repository.notes.value = listOf(note("a", "Changed elsewhere", "field").copy(revision = 5))
         repository.staleSave = true
         vm.save()
         runCurrent()
         assertEquals(4L, repository.lastDraft?.expectedRevision)
         assertTrue(vm.state.value.stale)
-        assertEquals("My unsaved work", vm.state.value.title)
-        assertEquals("Keep these details", vm.state.value.body)
+        assertEquals("My unsaved work", vm.title.text.toString())
+        assertEquals("Keep these details", vm.body.text.toString())
         assertNull(vm.state.value.savedId)
         assertEquals(0, schedules)
         vm.saveAsNew()
@@ -146,19 +207,19 @@ class ViewModelTest {
         val handle = SavedStateHandle(mapOf("noteId" to "a"))
         val first = editor(handle)
         runCurrent()
-        first.title("Unsaved")
+        first.title.setTextAndPlaceCursorAtEnd("Unsaved")
         repository.notes.value = listOf(note("a", "Latest", "study").copy(revision = 5))
-        val restored = editor(SavedStateHandle(handle.keys().associateWith { handle.get<Any?>(it) }))
+        val restored = editor(restoredHandle(handle))
         runCurrent()
         assertTrue(restored.state.value.stale)
-        assertEquals("Unsaved", restored.state.value.title)
+        assertEquals("Unsaved", restored.title.text.toString())
         restored.save()
         runCurrent()
         assertEquals(0, repository.saves)
         restored.reloadLatest()
         runCurrent()
         assertFalse(restored.state.value.stale)
-        assertEquals("Latest", restored.state.value.title)
+        assertEquals("Latest", restored.title.text.toString())
         assertEquals("study", restored.state.value.projectId)
         restored.save()
         runCurrent()
@@ -171,7 +232,7 @@ class ViewModelTest {
             "title" to "Older draft", "body" to "Keep me", "projectId" to "field")))
         runCurrent()
         assertTrue(vm.state.value.stale)
-        assertEquals("Older draft", vm.state.value.title)
+        assertEquals("Older draft", vm.title.text.toString())
         vm.save()
         runCurrent()
         assertEquals(0, repository.saves)
@@ -192,7 +253,7 @@ class ViewModelTest {
         assertFalse(vm.state.value.missing)
         vm.reloadLatest()
         runCurrent()
-        assertEquals("Unsaved", vm.state.value.title)
+        assertEquals("Unsaved", vm.title.text.toString())
         vm.saveAsNew()
         runCurrent()
         assertEquals("note-1", vm.state.value.savedId)
@@ -205,8 +266,8 @@ class ViewModelTest {
         val vm = editor(handle)
         runCurrent()
         assertTrue(vm.state.value.loadFailed)
-        vm.title("Typed before recovery")
-        vm.body("Keep this draft")
+        vm.title.setTextAndPlaceCursorAtEnd("Typed before recovery")
+        vm.body.setTextAndPlaceCursorAtEnd("Keep this draft")
         assertTrue(vm.state.value.loadFailed)
         vm.save()
         runCurrent()
@@ -215,8 +276,8 @@ class ViewModelTest {
         vm.load()
         runCurrent()
         assertFalse(vm.state.value.loadFailed)
-        assertEquals("Typed before recovery", vm.state.value.title)
-        assertEquals("Keep this draft", vm.state.value.body)
+        assertEquals("Typed before recovery", vm.title.text.toString())
+        assertEquals("Keep this draft", vm.body.text.toString())
         vm.save()
         runCurrent()
         assertEquals("Typed before recovery", repository.lastDraft?.title)
@@ -237,8 +298,11 @@ class ViewModelTest {
         val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect() }
         runCurrent()
-        vm.search("MEADOW")
+        vm.searchQuery.setTextAndPlaceCursorAtEnd("MEADOW")
+        Snapshot.sendApplyNotifications()
         vm.filter("field")
+        runCurrent()
+        advanceTimeBy(250)
         runCurrent()
         assertEquals(listOf("a"), vm.state.value.notes.map { it.id })
         assertEquals(3, vm.state.value.totalCount)
@@ -249,11 +313,138 @@ class ViewModelTest {
         repository.syncResult = SyncResult.RetryableFailure
         val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
         vm.sync()
-        assertTrue(vm.syncing.value)
         runCurrent()
         assertEquals(Feedback.OFFLINE, vm.feedback.value)
         assertEquals(1, schedules)
         assertFalse(vm.syncing.value)
+    }
+
+    @Test fun `manual sync deadline includes a suspended pass and prevents duplicate launches`() = runTest(dispatcher) {
+        repository.syncAction = { awaitCancellation() }
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.sync()
+        vm.sync()
+        assertEquals(1, repository.syncCalls)
+        assertTrue(vm.syncing.value)
+        advanceTimeBy(45_000)
+        runCurrent()
+        assertFalse(vm.syncing.value)
+        assertEquals(Feedback.TIMED_OUT_QUEUED, vm.feedback.value)
+        assertEquals(1, schedules)
+    }
+
+    @Test fun `slow continuation cannot strand the manual sync progress indicator`() = runTest(dispatcher) {
+        repository.syncAction = { awaitCancellation() }
+        scheduleDelayMillis = 60_000
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.sync()
+        advanceTimeBy(47_000)
+        runCurrent()
+        assertFalse(vm.syncing.value)
+        assertEquals(Feedback.TIMED_OUT, vm.feedback.value)
+    }
+
+    @Test fun `external sync cancellation does not become a failure or a retry`() = runTest(dispatcher) {
+        repository.syncAction = { throw CancellationException("owner cancelled") }
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.sync()
+        runCurrent()
+        assertFalse(vm.syncing.value)
+        assertNull(vm.feedback.value)
+        assertEquals(0, schedules)
+    }
+
+    @Test fun `bounded and deferred passes request continuation without announcing full sync`() = runTest(dispatcher) {
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        repository.syncResult = SyncResult.Success(1, 0, morePending = true)
+        vm.sync()
+        runCurrent()
+        assertEquals(Feedback.CONTINUING, vm.feedback.value)
+        repository.syncResult = SyncResult.Success(0, 0, deferred = 1)
+        vm.sync()
+        runCurrent()
+        assertEquals(Feedback.DEFERRED, vm.feedback.value)
+        assertEquals(2, schedules)
+        scheduleFails = true
+        vm.sync()
+        runCurrent()
+        assertEquals(Feedback.RETRY_NOT_SCHEDULED, vm.feedback.value)
+    }
+
+    @Test fun `search debounces intermediate queries and reuses unchanged metadata`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Meadow", "field"), note("b", "Forest", "study"))
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        val queries = mutableListOf<String>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.map { it.query }.toList(queries) }
+        runCurrent()
+        val metadata = vm.state.value.notesById
+        vm.searchQuery.setTextAndPlaceCursorAtEnd("Mea")
+        Snapshot.sendApplyNotifications()
+        runCurrent()
+        advanceTimeBy(100)
+        vm.searchQuery.setTextAndPlaceCursorAtEnd("Forest")
+        Snapshot.sendApplyNotifications()
+        runCurrent()
+        advanceTimeBy(250)
+        runCurrent()
+        assertFalse(queries.contains("Mea"))
+        assertEquals(listOf("b"), vm.state.value.notes.map { it.id })
+        assertSame(metadata, vm.state.value.notesById)
+        val matches = vm.state.value.notes
+        settings.setCompactCards(true)
+        runCurrent()
+        assertSame(matches, vm.state.value.notes)
+        assertSame(metadata, vm.state.value.notesById)
+    }
+
+    @Test fun `saved query restores without needing a text callback`() = runTest(dispatcher) {
+        val handle = SavedStateHandle()
+        val first = JournalViewModel(repository, settings, scheduler, handle, telemetry, dispatcher)
+        first.searchQuery.setTextAndPlaceCursorAtEnd("restored query")
+        first.searchQuery.edit { selection = TextRange(3) }
+        val restored = JournalViewModel(repository, settings, scheduler, restoredHandle(handle), telemetry, dispatcher)
+        assertEquals("restored query", restored.searchQuery.text.toString())
+        assertEquals(TextRange(3), restored.searchQuery.selection)
+    }
+
+    @Test fun `background failure notice clears when queued edits are drained`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Pending", "field"))
+        backgroundFailures.value = true
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect() }
+        runCurrent()
+        assertTrue(vm.state.value.backgroundSyncFailed)
+        repository.notes.value = repository.notes.value.map { it.copy(syncState = SyncState.SYNCED) }
+        runCurrent()
+        assertFalse(vm.state.value.backgroundSyncFailed)
+    }
+
+    @Test fun `slow background status does not delay journal content`() = runTest(dispatcher) {
+        repository.notes.value = listOf(note("a", "Available offline", "field"))
+        val slowScheduler = object : SyncScheduler {
+            override val backgroundSyncFailed = flow<Boolean> { awaitCancellation() }
+            override suspend fun requestSync() = error("unexpected scheduling")
+        }
+        val vm = JournalViewModel(repository, settings, slowScheduler, SavedStateHandle(), telemetry, dispatcher)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect() }
+        runCurrent()
+        assertFalse(vm.state.value.loading)
+        assertEquals("a", vm.state.value.notes.single().id)
+    }
+
+    @Test fun `server access remains unknown until credential initialization completes`() = runTest(dispatcher) {
+        val session = object : SessionRepository {
+            override val signedIn = MutableStateFlow<Boolean?>(null)
+            override suspend fun signIn(token: String) = error("unexpected sign in")
+            override suspend fun signOut() = error("unexpected sign out")
+        }
+        val vm = SettingsViewModel(settings, session)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect() }
+        runCurrent()
+        assertNull(vm.state.value.signedIn)
+        session.signedIn.value = true
+        runCurrent()
+        assertEquals(true, vm.state.value.signedIn)
     }
 
     @Test fun `deleting a note forwards its identity and schedules sync after success`() = runTest(dispatcher) {
@@ -395,7 +586,7 @@ class ViewModelTest {
 
     @Test fun `optional telemetry failure does not break the journal`() = runTest(dispatcher) {
         val unavailableTelemetry = object : Telemetry {
-            override fun record(event: AnalyticsEvent) = Unit
+            override suspend fun record(event: AnalyticsEvent) = Unit
             override suspend fun recordExposure(assignment: ExperimentAssignment) { error("diagnostic storage unavailable") }
         }
         val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), unavailableTelemetry, dispatcher)
@@ -420,6 +611,8 @@ private class FakeNotes : NoteRepository {
     var lastRetryId: String? = null
     var lastResolution: Pair<String, Boolean>? = null
     var syncResult: SyncResult = SyncResult.Success(0, 0)
+    var syncAction: (suspend () -> SyncResult)? = null
+    var syncCalls = 0
     override fun observeNotes(): Flow<List<Note>> = flow {
         if (failRead) error("read unavailable")
         emitAll(notes)
@@ -445,7 +638,12 @@ private class FakeNotes : NoteRepository {
         lastRetryId = id
         if (failRetry) error("retry unavailable")
     }
-    override suspend fun sync(): SyncResult = syncResult
+    override suspend fun sync(): SyncResult { syncCalls++; return syncAction?.invoke() ?: syncResult }
+}
+
+private class RecordingTelemetry : Telemetry {
+    val events = mutableListOf<AnalyticsEvent>()
+    override suspend fun record(event: AnalyticsEvent) { events.add(event) }
 }
 
 private class FakePreferences : PreferencesRepository {

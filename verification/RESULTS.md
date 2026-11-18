@@ -1,5 +1,13 @@
 # Verification record
 
+## Follow-up engineering audit (November 18, 2026)
+
+The final Gradle build on Temurin JDK 21.0.13 passed **87 JVM tests** (domain 11, data 24, feature 37, legacy 2, app 13), both debug APK builds, both debug lint tasks, and all three non-UI test APK assemblies. The profile task graphs resolved in a Gradle dry run. The Python suites passed **24 server tests** and **4 report tests**. Workflow syntax, documentation links, and whitespace checks passed.
+
+Android's instrumentation runner passed **41 non-UI checks** (34 data and 7 app) on the isolated API 36 Google APIs emulator. A separate **live Android-to-Python HTTP test** passed against a temporary server database. No functional UI tests were added or run.
+
+Regression coverage includes the WorkManager handoff during a running drain, retry exhaustion, outbox watermarks and cursor fairness, exact replay after a lost acknowledgment, Room 2-to-3 migration, unrecognized persisted states, decoded HTTP byte and row limits, text and selection restoration, cancellable search, and foreground sync deadlines. Full snapshot performance and user interaction on physical devices remain separate measurements.
+
 ## Audit fixes (November 18, 2026)
 
 Validation on Temurin JDK 21.0.13 passed **62 JVM tests** (domain 11, data 17, feature 26, legacy 2, app 6), demo debug lint, both debug APK builds, and all three non-UI test APK builds. The Python suites passed **23 server tests** and **4 test-report tests**. Workflow syntax, local documentation links, and whitespace checks passed.

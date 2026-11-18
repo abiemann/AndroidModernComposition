@@ -22,7 +22,7 @@ class SaveNote(
         return id
     }
 
-    private inline fun bestEffort(action: () -> Unit) {
+    private suspend fun bestEffort(action: suspend () -> Unit) {
         try { action() } catch (error: Exception) {
             if (error is CancellationException) throw error
         }

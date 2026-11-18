@@ -22,4 +22,11 @@ class SyncPolicyTest {
         assertEquals(WorkDecision.MUTATIONS_REJECTED, SyncResult.Success(2, 0, rejected = 1).workDecision(0))
         assertEquals(WorkDecision.SYNCED, SyncResult.Success(2, 0).workDecision(0))
     }
+    @Test fun `eligible backlog continues before ambiguity is retried with backoff`() {
+        val partial = SyncResult.Success(8, 0, morePending = true, deferred = 1)
+        assertEquals(WorkDecision.MORE_PENDING, partial.workDecision(0))
+        val onlyDeferred = partial.copy(morePending = false)
+        assertEquals(WorkDecision.RETRY, onlyDeferred.workDecision(4))
+        assertEquals(WorkDecision.RETRY_EXHAUSTED, onlyDeferred.workDecision(5))
+    }
 }

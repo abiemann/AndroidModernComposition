@@ -14,7 +14,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
@@ -36,6 +36,7 @@ dependencies {
     implementation(libs.koin.compose)
     implementation(libs.coroutines.android)
     testImplementation(libs.test.junit)
+    testImplementation(libs.test.robolectric)
     testImplementation(libs.coroutines.test)
     debugImplementation(libs.compose.ui.tooling)
 }

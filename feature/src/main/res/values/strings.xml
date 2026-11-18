@@ -46,6 +46,8 @@
     <string name="updated">Updated %1$s</string>
     <string name="revision">Local revision %1$d</string>
     <string name="note_rejected">Sync paused · review note</string>
+    <string name="note_unrecognized">Unavailable for changes</string>
+    <string name="note_unrecognized_body">This note cannot be changed safely. Its saved contents have been kept. Update the app or contact support before changing it.</string>
     <string name="deletion_rejected">Sync paused · review deletion</string>
     <string name="rejected_heading">Sync needs your attention</string>
     <string name="rejected_note_body">The server did not accept this note. You can edit it below, or retry after correcting the server problem. Your local version is preserved.</string>
@@ -70,6 +72,12 @@
     <string name="operation_failed">Something went wrong. Your saved notes are safe. Please try again.</string>
     <string name="retry">Retry</string>
     <string name="sync_success">Your journal is synchronized.</string>
+    <string name="sync_continuing">This sync pass finished. Background sync will continue the remaining changes.</string>
+    <string name="sync_deferred">Some changes have an uncertain server response. They are preserved for a safe background retry.</string>
+    <string name="sync_retry_not_scheduled">Your changes are preserved, but background retry could not be started. Try Sync now again.</string>
+    <string name="sync_timed_out">Sync took too long. Your changes are preserved. Try Sync now again.</string>
+    <string name="sync_timed_out_queued">Sync took too long. Your changes are preserved and background retry is queued.</string>
+    <string name="background_sync_paused">Background sync is paused. Use Sync now to try again.</string>
     <string name="sync_conflicts">Sync finished. Review the notes marked as conflicts.</string>
     <string name="sync_auth">Check your server access token in Settings to synchronize.</string>
     <string name="sync_local_network">Allow local network access in Settings to synchronize with your local server. Your notes are saved on this device.</string>
@@ -104,6 +112,7 @@
     <string name="privacy_note_demo">Notes and demo sync data stay in this app. Uninstalling clears them.</string>
     <string name="environment">Environment: %1$s</string>
     <string name="session_connected">Your access token is saved securely. Sync will check whether the server accepts it.</string>
+    <string name="session_loading">Checking saved server access…</string>
     <string name="session_disconnected">Add your local server’s access token to sync. You can keep writing offline.</string>
     <string name="token_label">Server access token</string>
     <string name="token_help">Use the server’s FIELDNOTES_TOKEN value: 24–4096 printable ASCII characters. The token is encrypted on this device.</string>

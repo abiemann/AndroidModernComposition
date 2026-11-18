@@ -16,6 +16,7 @@ import re
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import BoundedSemaphore
 from typing import Iterator
 
 MAX_BODY_BYTES = 65_536
@@ -207,12 +208,33 @@ class Store:
 class FieldNotesServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], store: Store, token: str):
+    def __init__(self, address: tuple[str, int], store: Store, token: str, *, max_active_requests: int = 16):
         if not 24 <= len(token) <= 4096 or not all(33 <= ord(character) <= 126 for character in token):
             raise ValueError("FIELDNOTES_TOKEN must contain 24 to 4096 printable ASCII characters without spaces")
         self.store = store
         self.token = token.encode("utf-8")
+        if max_active_requests < 1:
+            raise ValueError("max_active_requests must be positive")
+        self._request_slots = BoundedSemaphore(max_active_requests)
         super().__init__(address, Handler)
+
+    def process_request(self, request, client_address) -> None:
+        # Reject excess connections before creating a thread or reading a body.
+        # Closure has an unknown outcome to clients, so they retain replay IDs.
+        if not self._request_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 class Handler(BaseHTTPRequestHandler):

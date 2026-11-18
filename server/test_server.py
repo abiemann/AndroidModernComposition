@@ -10,6 +10,7 @@ import socket
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -29,7 +30,7 @@ class ServerTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.path = Path(self.directory.name) / "notes.db"
-        self.server = FieldNotesServer(("127.0.0.1", 0), Store(self.path), TOKEN)
+        self.server = FieldNotesServer(("127.0.0.1", 0), Store(self.path), TOKEN, max_active_requests=2)
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
 
@@ -68,6 +69,41 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual(["field", "study"], [project["id"] for project in result["projects"]])
         self.assertEqual([], result["notes"])
+
+    def test_active_request_limit_closes_excess_connections_and_recovers(self):
+        entered = threading.Barrier(3)
+        release = threading.Event()
+        calls = []
+        original_snapshot = self.server.store.snapshot
+
+        def held_snapshot():
+            calls.append(True)
+            entered.wait(timeout=3)
+            if not release.wait(timeout=3):
+                raise TimeoutError("test did not release held snapshot")
+            return original_snapshot()
+
+        with ThreadPoolExecutor(max_workers=2) as clients:
+            with patch.object(self.server.store, "snapshot", side_effect=held_snapshot):
+                active = [clients.submit(self.request) for _ in range(2)]
+                try:
+                    entered.wait(timeout=3)
+                    with self.assertRaises((http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError)):
+                        self.request()
+                    self.assertEqual(2, len(calls))
+                finally:
+                    release.set()
+                self.assertEqual([200, 200], [future.result()[0] for future in active])
+        # Response delivery can precede worker-thread cleanup by a scheduling turn.
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                self.assertEqual(200, self.request()[0])
+                break
+            except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError):
+                if time.monotonic() >= deadline:
+                    self.fail("Request slots were not released after completed requests")
+                time.sleep(0.01)
 
     def test_responses_explicitly_close_connections_for_connection_pools(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)

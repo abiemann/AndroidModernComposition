@@ -17,7 +17,8 @@ import javax.crypto.spec.GCMParameterSpec
 /** AES-GCM authenticates the ciphertext. The key never leaves Android Keystore.
  * Call on a background thread. The file is excluded from backup with its app. */
 class KeystoreTokenStore(context: Context) : TokenStore {
-    private val file = AtomicFile(File(context.noBackupFilesDir, "session.enc"))
+    private val applicationContext = context.applicationContext
+    private val file by lazy { AtomicFile(File(applicationContext.noBackupFilesDir, "session.enc")) }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

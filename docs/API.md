@@ -31,9 +31,11 @@ All endpoints require `Authorization: Bearer <token>`. Responses use JSON and `C
 
 This small HTTP/1.0 server uses one request per connection and sends explicit `Connection: close` plus `Content-Length` on every response. This prevents a pooled client from reusing an already closed socket when automatic HTTP retries are disabled; durable write replay remains the repository's responsibility.
 
+The development server allows up to 16 active request handlers. Excess connections close before request processing and can be retried. A socket that stops sending or receiving data times out after 10 seconds.
+
 `GET /v1/notes` returns a consistent complete snapshot. The study server admits up to 10,000 note IDs, including retained deletion records. At capacity, edits, deletes and exact replays for existing IDs still work. The server rejects a new ID before writing it.
 
-An older database already above this limit requires a data migration or a paginated client/server protocol before it can sync with the bounded snapshot client.
+The Android client caps a decoded snapshot body at 8 MiB and other response bodies at 64 KiB before parsing. While parsing a snapshot it accepts up to 1,000 projects and 10,000 notes. A notebook exceeding a snapshot limit needs a smaller dataset or a paginated protocol to complete the pull.
 
 ```json
 {
@@ -73,7 +75,7 @@ An older database already above this limit requires a data migration or a pagina
 | `411` / `413` / `415` | Missing length, empty/oversized body, or wrong media type. Fix the request. |
 | `503` | Temporary SQLite failure. Retain pending data and retry with backoff. |
 
-For a definitive mutation rejection, the server returns `400` or `404` with `{"error":"…","code":"mutation_rejected","operationId":"…"}`. Android pauses a note only if the `operationId` matches its queued write, so other notes and snapshot downloads can continue. Authentication, routing, request framing and transient failures omit this marker because they do not establish the outcome of the logical operation. A client preserves the exact queued operation if the response is ambiguous, including an unreadable acknowledgment.
+For a definitive mutation rejection, the server returns `400` or `404` with `{"error":"…","code":"mutation_rejected","operationId":"…"}`. Android pauses a note only if the `operationId` matches its queued write. If the response for one operation is ambiguous, such as an unreadable acknowledgment or an unbound `400`, Android defers that note's remaining uploads for the pass and keeps the exact operation for replay. It can still upload unrelated notes and pull the snapshot. Authentication and service availability failures stop the pass.
 
 A successful operation and its serialized acknowledgment are stored in the **same SQLite transaction** as the note. Repeating the same operation returns that original acknowledgment even if another edit has since advanced the note. This handles a connection lost after the server commits but before the client receives the response. The client must replay an uncertain write before rebasing later edits. A different payload with the same operation ID fails rather than silently duplicating or changing a write. Conflicts are not recorded as successful operations.
 

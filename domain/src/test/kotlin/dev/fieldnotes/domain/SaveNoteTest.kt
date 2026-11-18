@@ -12,7 +12,7 @@ class SaveNoteTest {
     private var scheduled = 0
     private val events = mutableListOf<AnalyticsEvent>()
     private val save = SaveNote(repository, SyncScheduler { scheduled++ }, object : Telemetry {
-        override fun record(event: AnalyticsEvent) { events += event }
+        override suspend fun record(event: AnalyticsEvent) { events += event }
     })
 
     @Test fun `whitespace only title never writes or schedules`() = runTest {
@@ -37,7 +37,7 @@ class SaveNoteTest {
 
     @Test fun `failure of optional effects does not turn a saved insert into a retry`() = runTest {
         val effectsFail = SaveNote(repository, SyncScheduler { throw IllegalStateException("Unavailable") },
-            object : Telemetry { override fun record(event: AnalyticsEvent) { throw IllegalStateException() } })
+            object : Telemetry { override suspend fun record(event: AnalyticsEvent) { throw IllegalStateException() } })
         assertEquals("new-note", effectsFail(NoteDraft(projectId = "field", title = "Heron", body = "")))
         assertNotNull(repository.saved)
     }

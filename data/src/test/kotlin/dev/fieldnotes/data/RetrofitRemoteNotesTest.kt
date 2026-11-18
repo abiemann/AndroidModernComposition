@@ -5,6 +5,10 @@ import java.io.IOException
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
+import okio.Buffer
+import java.io.ByteArrayOutputStream
+import java.util.zip.GZIPOutputStream
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -64,7 +68,7 @@ class RetrofitRemoteNotesTest {
         server.enqueue(MockResponse().setBody("""{"projects":[],"notes":[$noteJson]}"""))
         try { remote.snapshot(); fail("Unknown project must fail") } catch (_: RejectedRequest) { }
         server.enqueue(MockResponse().setBody(noteJson.replace("n1", "other")))
-        try { remote.push("n1", mutation); fail("Wrong id must fail") } catch (_: RejectedRequest) { }
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
         server.enqueue(MockResponse().setBody("""{"projects":null,"notes":null}"""))
         try { remote.snapshot(); fail("Null collections must fail") } catch (_: RejectedRequest) { }
     }
@@ -87,7 +91,7 @@ class RetrofitRemoteNotesTest {
             try { remote.snapshot(); fail("Invalid snapshot must be rejected: $body") } catch (_: RejectedRequest) { }
         }
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"current":null}"""))
-        try { remote.push("n1", mutation); fail("Null conflict must be rejected") } catch (_: RejectedRequest) { }
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
     }
 
     @Test fun definitiveRejectionRequiresSemanticStatusAndMatchingOperationId() = runTest {
@@ -111,8 +115,7 @@ class RetrofitRemoteNotesTest {
         )
         unboundResponses.forEach { (status, body) ->
             server.enqueue(MockResponse().setResponseCode(status).setBody(body))
-            try { remote.push("n1", mutation); fail("This response does not prove the operation was uncommitted") }
-            catch (_: RejectedRequest) { }
+            assertEquals(PushResult.Deferred, remote.push("n1", mutation))
         }
     }
 
@@ -120,8 +123,7 @@ class RetrofitRemoteNotesTest {
         listOf(200, 409).forEach { status ->
             server.enqueue(MockResponse().setResponseCode(status)
                 .setBody("""{"code":"mutation_rejected","operationId":"op1"}"""))
-            try { remote.push("n1", mutation); fail("A malformed acknowledgment must keep replay identity") }
-            catch (_: RejectedRequest) { }
+            assertEquals(PushResult.Deferred, remote.push("n1", mutation))
         }
     }
 
@@ -131,5 +133,50 @@ class RetrofitRemoteNotesTest {
         try { remote.push("n1", mutation); fail("Authentication failure must remain global") } catch (_: AuthenticationFailure) { }
         server.enqueue(MockResponse().setResponseCode(503).setBody(body))
         try { remote.push("n1", mutation); fail("Transient failure must remain retryable") } catch (_: IOException) { }
+    }
+
+    @Test fun declaredOversizedBodiesAreRejectedBeforeReadingAndFollowingRequestsStillWork() = runTest {
+        server.enqueue(MockResponse().setBody("{}").setHeader("Content-Length", HttpBodyLimits.SNAPSHOT_BYTES + 1))
+        try { remote.snapshot(); fail("Declared snapshot bound must be enforced") } catch (_: RejectedRequest) { }
+        server.enqueue(MockResponse().setBody(noteJson).setHeader("Content-Length", HttpBodyLimits.OPERATION_BYTES + 1))
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
+        server.enqueue(MockResponse().setBody(noteJson))
+        assertTrue(remote.push("n1", mutation) is PushResult.Accepted)
+    }
+
+    @Test fun chunkedAndCompressedBodiesAreBoundedByDecodedBytes() = runTest {
+        val oversized = noteJson + " ".repeat(HttpBodyLimits.OPERATION_BYTES.toInt())
+        server.enqueue(MockResponse().setChunkedBody(oversized, 2048))
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
+        val compressed = ByteArrayOutputStream().apply {
+            GZIPOutputStream(this).use { it.write(oversized.toByteArray()) }
+        }.toByteArray()
+        server.enqueue(MockResponse().setBody(Buffer().write(compressed)).setHeader("Content-Encoding", "gzip"))
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
+        server.enqueue(MockResponse().setResponseCode(409).setChunkedBody(oversized, 2048))
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
+        server.enqueue(MockResponse().setResponseCode(401).setBody(oversized))
+        try { remote.push("n1", mutation); fail("Body limits must preserve authentication status") }
+        catch (_: AuthenticationFailure) { }
+    }
+
+    @Test fun snapshotLimitsNoteCountEvenWhenTheBodyFitsInTheByteBudget() = runTest {
+        val notes = (1..10_001).map { noteJson.replace("\"n1\"", "\"n$it\"") }
+        fun snapshotBody(count: Int) =
+            """{"projects":[{"id":"field","name":"Field"}],"notes":[${notes.take(count).joinToString(",")}]}"""
+        server.enqueue(MockResponse().setBody(snapshotBody(10_000)))
+        assertEquals(10_000, remote.snapshot().notes.size)
+        val oversized = snapshotBody(10_001)
+        assertTrue(oversized.length.toLong() < HttpBodyLimits.SNAPSHOT_BYTES)
+        server.enqueue(MockResponse().setBody(oversized))
+        try { remote.snapshot(); fail("Snapshot row count must be enforced") } catch (_: RejectedRequest) { }
+    }
+
+    @Test fun malformedBufferedJsonDefersButTruncatedNetworkBodyRemainsRetryable() = runTest {
+        server.enqueue(MockResponse().setBody("{\"id\":\"unterminated"))
+        assertEquals(PushResult.Deferred, remote.push("n1", mutation))
+        server.enqueue(MockResponse().setBody(noteJson).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        try { remote.push("n1", mutation); fail("A transport truncation must remain a global retry") }
+        catch (_: IOException) { }
     }
 }

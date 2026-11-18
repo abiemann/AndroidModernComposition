@@ -29,7 +29,6 @@ android {
         create("profile") {
             initWith(getByName("benchmark"))
             isMinifyEnabled = false; isShrinkResources = false
-            matchingFallbacks += "release"
         }
     }
     buildFeatures { compose = true; buildConfig = true }

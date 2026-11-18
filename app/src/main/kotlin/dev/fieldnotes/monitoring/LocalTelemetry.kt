@@ -27,9 +27,12 @@ class LocalTelemetry(
     private var configuration = Preferences()
     private var settingsEpoch = 0L
     private val exposed = mutableSetOf<ExperimentVariant>()
-    private val storage = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE)
+    private val applicationContext = context.applicationContext
+    // Construction happens in the composition root, which may run on main.
+    // Resolve/load preferences only from the IO work below.
+    private val storage by lazy { applicationContext.getSharedPreferences("diagnostics", Context.MODE_PRIVATE) }
     init {
-        scope.launch {
+        scope.launch(ioDispatcher) {
             preferences.preferences.collect {
                 synchronized(this@LocalTelemetry) {
                     applyConfiguration(it)
@@ -38,35 +41,35 @@ class LocalTelemetry(
         }
     }
 
-    @Synchronized override fun record(event: AnalyticsEvent) {
-        if (!configuration.analyticsEnabled) return
-        increment(event.name)
-        val assignment = configuration.compactCardsExperiment
-        if (event == AnalyticsEvent.NOTE_SAVED && !assignment.isOverridden && assignment.variant in exposed) {
-            increment("${assignment.experimentId}.${assignment.variant}.${event.name}")
-        }
+    override suspend fun record(event: AnalyticsEvent) = withConsent { current ->
+        val assignment = current.compactCardsExperiment
+        val experimentEvent = if (event == AnalyticsEvent.NOTE_SAVED && !assignment.isOverridden && assignment.variant in exposed)
+            "${assignment.experimentId}.${assignment.variant}.${event.name}" else null
+        increment(event.name, experimentEvent)
         Log.i("FieldNotesMetrics", event.name)
     }
 
-    override suspend fun recordExposure(assignment: ExperimentAssignment) = withContext(ioDispatcher) {
-        while (true) {
-            val epoch = synchronized(this@LocalTelemetry) { settingsEpoch }
-            val current = preferences.preferences.first()
-            val applied = synchronized(this@LocalTelemetry) {
-                // An opt-out may have cleared diagnostics while this read was suspended.
-                // Re-read instead of replacing a newer configuration with the old snapshot.
-                if (settingsEpoch != epoch) return@synchronized false
+    override suspend fun recordExposure(assignment: ExperimentAssignment) = withConsent {
+        val experimentEvent = if (!assignment.isOverridden)
+            "${assignment.experimentId}.${assignment.variant}.JOURNAL_EXPOSED" else null
+        if (!assignment.isOverridden) {
+            exposed += assignment.variant
+        }
+        increment(AnalyticsEvent.JOURNAL_EXPOSED.name, experimentEvent)
+    }
+
+    private suspend fun withConsent(record: (Preferences) -> Unit) = withContext(ioDispatcher) {
+        val epoch = synchronized(this@LocalTelemetry) { settingsEpoch }
+        val current = preferences.preferences.first()
+        synchronized(this@LocalTelemetry) {
+            // A settings change may have cleared diagnostics while this read was
+            // suspended. Drop this optional event; never spin or restore old consent.
+            if (settingsEpoch != epoch) return@synchronized
+            if (!current.analyticsEnabled) {
                 applyConfiguration(current)
-                if (current.analyticsEnabled) {
-                    increment(AnalyticsEvent.JOURNAL_EXPOSED.name)
-                    if (!assignment.isOverridden) {
-                        exposed += assignment.variant
-                        increment("${assignment.experimentId}.${assignment.variant}.JOURNAL_EXPOSED")
-                    }
-                }
-                true
+            } else {
+                record(current)
             }
-            if (applied) break
         }
     }
 
@@ -75,15 +78,25 @@ class LocalTelemetry(
         settingsEpoch++
         if (!current.analyticsEnabled) {
             exposed.clear()
-            storage.edit { clear() }
+            storage.edit(commit = true) { clear() }
         }
     }
 
-    private fun increment(key: String) {
-        storage.edit { putInt(key, (storage.getInt(key, 0) + 1).coerceAtMost(1_000_000)) }
+    private fun increment(key: String, experimentKey: String?) {
+        // Persist this small batch on IO instead of enqueuing apply() work that
+        // Android may later flush synchronously during a main-thread lifecycle event.
+        storage.edit(commit = true) {
+            putInt(key, (storage.getInt(key, 0).coerceIn(0, 999_999) + 1))
+            if (experimentKey != null) {
+                putInt(experimentKey, (storage.getInt(experimentKey, 0).coerceIn(0, 999_999) + 1))
+            }
+        }
     }
 
     fun installCrashHandler() {
+        // Call from IO during startup. Only a terminal crash uses synchronous
+        // commit below, before the platform handler can terminate the process.
+        storage.all
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             try {

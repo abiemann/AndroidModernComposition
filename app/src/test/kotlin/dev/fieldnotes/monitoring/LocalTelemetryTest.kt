@@ -2,6 +2,8 @@ package dev.fieldnotes.monitoring
 
 import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import dev.fieldnotes.domain.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,6 +25,15 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class, manifest = Config.NONE)
 class LocalTelemetryTest {
+    @Test fun `constructing telemetry does not open diagnostic storage on the caller thread`() = runTest {
+        val context = TrackingContext(RuntimeEnvironment.getApplication())
+        val settings = TestPreferences()
+        LocalTelemetry(context, settings, backgroundScope, StandardTestDispatcher(testScheduler))
+        assertEquals(0, context.storageOpens)
+        runCurrent()
+        assertEquals(1, context.storageOpens)
+    }
+
     @Test fun `consent gates counters and overrides never enter experimental results`() = runTest {
         val context = RuntimeEnvironment.getApplication()
         val stored = context.getSharedPreferences("diagnostics", Context.MODE_PRIVATE)
@@ -70,6 +81,7 @@ class LocalTelemetryTest {
 
         val releaseSnapshot = CompletableDeferred<Unit>()
         settings.beforeNextSnapshot = { releaseSnapshot.await() }
+        val readsBeforeExposure = settings.collections
         val exposure = launch { telemetry.recordExposure(compact) }
         runCurrent()
         assertFalse(exposure.isCompleted)
@@ -79,6 +91,7 @@ class LocalTelemetryTest {
         assertTrue(stored.all.isEmpty())
         releaseSnapshot.complete(Unit)
         exposure.join()
+        assertEquals(readsBeforeExposure + 1, settings.collections) // Stale optional work is dropped, never retried.
 
         telemetry.record(AnalyticsEvent.NOTE_SAVED)
         assertTrue(stored.all.isEmpty())
@@ -86,8 +99,10 @@ class LocalTelemetryTest {
 
     private class TestPreferences : PreferencesRepository {
         val values = MutableStateFlow(Preferences())
+        var collections = 0
         var beforeNextSnapshot: (suspend () -> Unit)? = null
         override val preferences = flow {
+            collections++
             val beforeSnapshot = beforeNextSnapshot
             if (beforeSnapshot != null) {
                 beforeNextSnapshot = null
@@ -101,5 +116,14 @@ class LocalTelemetryTest {
         override suspend fun resetCompactCardsOverride() = Unit
         override suspend fun setAnalyticsEnabled(enabled: Boolean) { values.value = values.value.copy(analyticsEnabled = enabled) }
         override suspend fun setNotificationsEnabled(enabled: Boolean) = Unit
+    }
+
+    private class TrackingContext(context: Context) : ContextWrapper(context) {
+        var storageOpens = 0
+        override fun getApplicationContext(): Context = this
+        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+            storageOpens++
+            return super.getSharedPreferences(name, mode)
+        }
     }
 }

@@ -1,6 +1,8 @@
 package dev.fieldnotes.feature
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -68,11 +70,15 @@ internal fun NoteScreen(
                     }
                 }
             }
+            if (note.syncState == SyncState.UNRECOGNIZED) {
+                Text(stringResource(R.string.note_unrecognized_body), color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
             HorizontalDivider()
             Text(note.body, style = MaterialTheme.typography.bodyLarge)
             Text(stringResource(R.string.revision, note.revision), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!note.deleted) {
+            if (!note.deleted && note.syncState != SyncState.UNRECOGNIZED) {
                 Button(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.Edit, null)
                     Spacer(Modifier.width(8.dp))
@@ -97,7 +103,7 @@ internal fun NoteScreen(
 
 @Composable
 fun EditorScreen(
-    state: EditorUiState, onTitle: (String) -> Unit, onBody: (String) -> Unit,
+    state: EditorUiState, title: TextFieldState, body: TextFieldState,
     onProject: (String) -> Unit, onSave: () -> Unit, onRetry: () -> Unit,
     onSaveAsNew: () -> Unit, onReloadLatest: () -> Unit,
 ) {
@@ -106,7 +112,9 @@ fun EditorScreen(
     ContentColumn {
         Text(stringResource(if (state.editing) R.string.edit_note else R.string.new_note), style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.semantics { heading() })
-        if (state.missing) {
+        if (state.unrecognized) {
+            Text(stringResource(R.string.note_unrecognized_body), color = MaterialTheme.colorScheme.error)
+        } else if (state.missing) {
             Text(stringResource(R.string.missing_note))
         } else {
             if (state.loadFailed) {
@@ -131,17 +139,17 @@ fun EditorScreen(
                         enabled = !state.saving && !state.loadFailed, label = { Text(project.name) })
                 }
             }
-            OutlinedTextField(value = state.title, onValueChange = onTitle, singleLine = true,
+            OutlinedTextField(state = title, lineLimits = TextFieldLineLimits.SingleLine,
                 modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.title_label)) },
                 enabled = !state.saving && !state.loadFailed,
                 isError = state.validation == InvalidNote.Reason.TITLE_REQUIRED || state.validation == InvalidNote.Reason.TITLE_TOO_LONG,
-                supportingText = { Text("${state.title.length} / 120") })
-            OutlinedTextField(value = state.body, onValueChange = onBody,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp), minLines = 7,
+                supportingText = { Text("${title.text.length} / 120") })
+            OutlinedTextField(state = body,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp), lineLimits = TextFieldLineLimits.MultiLine(minHeightInLines = 7),
                 label = { Text(stringResource(R.string.body_label)) },
                 placeholder = { Text(stringResource(R.string.body_placeholder)) }, enabled = !state.saving && !state.loadFailed,
                 isError = state.validation == InvalidNote.Reason.BODY_TOO_LONG,
-                supportingText = { Text("${state.body.length} / 10,000") })
+                supportingText = { Text("${body.text.length} / 10,000") })
             state.validation?.let { reason ->
                 Text(stringResource(when (reason) {
                     InvalidNote.Reason.TITLE_REQUIRED -> R.string.title_required

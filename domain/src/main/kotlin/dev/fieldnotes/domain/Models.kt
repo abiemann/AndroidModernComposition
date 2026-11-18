@@ -1,10 +1,11 @@
 package dev.fieldnotes.domain
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 data class Project(val id: String, val name: String)
 
-enum class SyncState { PENDING, SYNCED, CONFLICT, REJECTED }
+enum class SyncState { PENDING, SYNCED, CONFLICT, REJECTED, UNRECOGNIZED }
 
 data class Note(
     val id: String,
@@ -29,7 +30,14 @@ data class NoteDraft(
 class StaleNoteEdit : Exception()
 
 sealed interface SyncResult {
-    data class Success(val uploaded: Int, val conflicts: Int, val rejected: Int = 0) : SyncResult
+    /** [morePending] requests another bounded pass. [deferred] counts notes with an uncertain acknowledgement. */
+    data class Success(
+        val uploaded: Int,
+        val conflicts: Int,
+        val rejected: Int = 0,
+        val morePending: Boolean = false,
+        val deferred: Int = 0,
+    ) : SyncResult
     data object AuthenticationRequired : SyncResult
     data object PermissionRequired : SyncResult
     data object RetryableFailure : SyncResult
@@ -48,13 +56,16 @@ interface NoteRepository {
     suspend fun sync(): SyncResult
 }
 
-fun interface SyncScheduler { fun requestSync() }
+fun interface SyncScheduler {
+    suspend fun requestSync()
+    val backgroundSyncFailed: Flow<Boolean> get() = flowOf(false)
+}
 fun interface Clock { fun now(): Long }
 fun interface IdGenerator { fun next(): String }
 
 enum class AnalyticsEvent { NOTE_SAVED, SYNC_SUCCEEDED, SYNC_FAILED, JOURNAL_EXPOSED }
 interface Telemetry {
-    fun record(event: AnalyticsEvent)
+    suspend fun record(event: AnalyticsEvent)
     suspend fun recordExposure(assignment: ExperimentAssignment) { record(AnalyticsEvent.JOURNAL_EXPOSED) }
 }
 
@@ -74,7 +85,7 @@ interface PreferencesRepository {
 }
 
 interface SessionRepository {
-    val signedIn: Flow<Boolean>
+    val signedIn: Flow<Boolean?>
     suspend fun signIn(token: String)
     suspend fun signOut()
 }

@@ -9,7 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-data class SettingsUiState(val preferences: Preferences = Preferences(), val signedIn: Boolean = false)
+data class SettingsUiState(val preferences: Preferences = Preferences(), val signedIn: Boolean? = null)
 
 class SettingsViewModel(
     private val preferences: PreferencesRepository,

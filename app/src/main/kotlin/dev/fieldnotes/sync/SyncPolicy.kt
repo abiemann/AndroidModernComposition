@@ -7,6 +7,7 @@ internal enum class WorkDecision {
     SYNCED,
     CONFLICTS,
     MUTATIONS_REJECTED,
+    MORE_PENDING,
     AUTHENTICATION_REQUIRED,
     PERMISSION_REQUIRED,
     RESPONSE_REJECTED,
@@ -14,14 +15,23 @@ internal enum class WorkDecision {
     UNEXPECTED_FAILURE,
 }
 
-/** Only transient sync outcomes request a WorkManager retry. Other outcomes finish this wakeup. */
+private const val MAX_RETRIES = 5
+
+internal fun unexpectedFailureDecision(attempt: Int): WorkDecision =
+    retryOr(attempt, WorkDecision.UNEXPECTED_FAILURE)
+
+private fun retryOr(attempt: Int, exhausted: WorkDecision): WorkDecision =
+    if (attempt < MAX_RETRIES) WorkDecision.RETRY else exhausted
+
 internal fun SyncResult.workDecision(attempt: Int): WorkDecision = when (this) {
     is SyncResult.Success -> when {
+        morePending -> WorkDecision.MORE_PENDING
+        deferred > 0 -> retryOr(attempt, WorkDecision.RETRY_EXHAUSTED)
         rejected > 0 -> WorkDecision.MUTATIONS_REJECTED
         conflicts > 0 -> WorkDecision.CONFLICTS
         else -> WorkDecision.SYNCED
     }
-    SyncResult.RetryableFailure -> if (attempt < 5) WorkDecision.RETRY else WorkDecision.RETRY_EXHAUSTED
+    SyncResult.RetryableFailure -> retryOr(attempt, WorkDecision.RETRY_EXHAUSTED)
     SyncResult.AuthenticationRequired -> WorkDecision.AUTHENTICATION_REQUIRED
     SyncResult.PermissionRequired -> WorkDecision.PERMISSION_REQUIRED
     SyncResult.Rejected -> WorkDecision.RESPONSE_REJECTED

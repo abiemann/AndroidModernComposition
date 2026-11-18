@@ -6,6 +6,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -13,26 +16,32 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.fieldnotes.domain.Note
 import dev.fieldnotes.domain.SyncState
-import java.text.DateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 @Composable
 fun JournalScreen(
     state: JournalUiState,
-    onSearch: (String) -> Unit,
+    searchQuery: TextFieldState,
     onFilter: (String) -> Unit,
     onOpen: (String) -> Unit,
     onCreate: () -> Unit,
     onRetry: () -> Unit = {},
 ) {
+    val dateFormatter = rememberNoteDateFormatter()
     val filtered = state.query.isNotEmpty() || state.projectId.isNotEmpty()
     val trulyEmpty = !state.loading && !state.loadFailed && state.totalCount == 0 && !filtered
     val showControls = state.totalCount > 0 || filtered
@@ -45,6 +54,10 @@ fun JournalScreen(
             horizontalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium),
             verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium),
         ) {
+            if (state.backgroundSyncFailed) item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(stringResource(R.string.background_sync_paused), color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
             if (!trulyEmpty) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
                     Text(stringResource(R.string.journal), style = MaterialTheme.typography.headlineMedium,
@@ -52,12 +65,12 @@ fun JournalScreen(
                     if (!state.loading && !state.loadFailed) JournalSummary(state.totalCount, state.pendingCount, state.attentionCount)
                     if (showControls) {
                         OutlinedTextField(
-                            value = state.query, onValueChange = onSearch,
-                            modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            state = searchQuery,
+                            modifier = Modifier.fillMaxWidth(), lineLimits = TextFieldLineLimits.SingleLine,
                             label = { Text(stringResource(R.string.search_notes)) },
                             leadingIcon = { Icon(Icons.Outlined.Search, null) },
                             trailingIcon = {
-                                if (state.query.isNotEmpty()) IconButton(onClick = { onSearch("") }) {
+                                if (searchQuery.text.isNotEmpty()) IconButton(onClick = searchQuery::clearText) {
                                     Icon(Icons.Outlined.Close, stringResource(R.string.clear_search))
                                 }
                             },
@@ -89,8 +102,8 @@ fun JournalScreen(
                 NoMatchingNotes()
             }
             items(state.notes, key = { it.id }, contentType = { "note" }) { note ->
-                NoteCard(note, state.projects.firstOrNull { it.id == note.projectId }?.name.orEmpty(),
-                    state.compactCards, onClick = { onOpen(note.id) })
+                NoteCard(note, state.projectNames[note.projectId].orEmpty(),
+                    state.compactCards, dateFormatter, onClick = { onOpen(note.id) })
             }
         }
     }
@@ -151,7 +164,7 @@ private fun NoMatchingNotes() {
 }
 
 @Composable
-private fun NoteCard(note: Note, project: String, compact: Boolean, onClick: () -> Unit) {
+private fun NoteCard(note: Note, project: String, compact: Boolean, dateFormatter: DateTimeFormatter, onClick: () -> Unit) {
     OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth().animateContentSize(),
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -168,7 +181,7 @@ private fun NoteCard(note: Note, project: String, compact: Boolean, onClick: () 
                 style = MaterialTheme.typography.bodyMedium)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             SyncBadge(note)
-            Text(formatDate(note.updatedAt), style = MaterialTheme.typography.labelSmall,
+            Text(formatDate(note.updatedAt, dateFormatter), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -181,16 +194,24 @@ internal fun SyncBadge(note: Note) {
         SyncState.PENDING -> Icons.Outlined.Schedule to R.string.note_pending
         SyncState.CONFLICT -> Icons.Outlined.WarningAmber to if (note.deleted) R.string.deletion_conflict else R.string.note_conflict
         SyncState.REJECTED -> Icons.Outlined.ErrorOutline to if (note.deleted) R.string.deletion_rejected else R.string.note_rejected
+        SyncState.UNRECOGNIZED -> Icons.Outlined.ErrorOutline to R.string.note_unrecognized
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(icon, null, Modifier.size(16.dp), tint = if (note.syncState == SyncState.CONFLICT || note.syncState == SyncState.REJECTED)
+        Icon(icon, null, Modifier.size(16.dp), tint = if (note.syncState == SyncState.CONFLICT || note.syncState == SyncState.REJECTED || note.syncState == SyncState.UNRECOGNIZED)
             MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
         Text(stringResource(label), style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
-internal fun formatDate(timestamp: Long): String {
-    val formatter = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
-    return remember(timestamp, formatter) { formatter.format(Date(timestamp)) }
+internal fun rememberNoteDateFormatter(): DateTimeFormatter {
+    val locale = LocalConfiguration.current.locales[0]
+    val zone = ZoneId.systemDefault()
+    return remember(locale, zone) {
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(locale).withZone(zone)
+    }
 }
+
+@Composable
+internal fun formatDate(timestamp: Long, formatter: DateTimeFormatter = rememberNoteDateFormatter()): String =
+    remember(timestamp, formatter) { formatter.format(Instant.ofEpochMilli(timestamp)) }

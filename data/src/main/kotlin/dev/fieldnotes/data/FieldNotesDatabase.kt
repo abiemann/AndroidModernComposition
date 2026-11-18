@@ -22,7 +22,7 @@ data class ProjectEntity(@PrimaryKey val id: String, val name: String)
 @Entity(
     tableName = "notes",
     foreignKeys = [ForeignKey(entity = ProjectEntity::class, parentColumns = ["id"], childColumns = ["projectId"])],
-    indices = [Index("projectId"), Index("updatedAt")],
+    indices = [Index("projectId"), Index("updatedAt"), Index("syncState")],
 )
 data class NoteEntity(
     @PrimaryKey val id: String,
@@ -35,6 +35,8 @@ data class NoteEntity(
     val syncState: String,
     val deleted: Boolean,
 )
+
+data class NoteVersion(val id: String, val localRevision: Long, val serverVersion: Long, val syncState: String)
 
 /** Immutable edit snapshots survive process death and ambiguous network failures. */
 @Entity(tableName = "outbox", indices = [Index(value = ["operationId"], unique = true), Index("noteId")])
@@ -60,7 +62,11 @@ data class ConflictEntity(@PrimaryKey val noteId: String, val remoteJson: String
 data class DemoNoteEntity(@PrimaryKey val id: String, val remoteJson: String)
 
 @Entity(tableName = "demo_operations")
+/** requestJson retains its historical column name; new rows store a versioned SHA-256 fingerprint. */
 data class DemoOperationEntity(@PrimaryKey val operationId: String, val requestJson: String, val responseJson: String)
+
+@Entity(tableName = "sync_cursor")
+data class SyncCursorEntity(@PrimaryKey val id: Int = 0, val afterSequence: Long)
 
 @Dao
 interface NotesDao {
@@ -72,11 +78,26 @@ interface NotesDao {
     @Query("SELECT * FROM projects WHERE id = :id") suspend fun project(id: String): ProjectEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putNote(note: NoteEntity)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertProjects(projects: List<ProjectEntity>)
-    @Query("UPDATE projects SET name = :name WHERE id = :id") suspend fun renameProject(id: String, name: String)
+    @Query("UPDATE projects SET name = :name WHERE id = :id AND name != :name")
+    suspend fun renameProject(id: String, name: String)
+    @Query("SELECT id, localRevision, serverVersion, syncState FROM notes WHERE id IN (:ids)")
+    suspend fun noteVersions(ids: List<String>): List<NoteVersion>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putNotes(notes: List<NoteEntity>)
     @Insert suspend fun enqueue(operation: OutboxEntity)
     @Query("""SELECT outbox.* FROM outbox INNER JOIN notes ON notes.id = outbox.noteId
-        WHERE notes.syncState = 'PENDING' ORDER BY outbox.sequence LIMIT 1""")
-    suspend fun nextOperation(): OutboxEntity?
+        WHERE notes.syncState = 'PENDING' AND outbox.sequence > :afterSequence AND outbox.sequence <= :throughSequence
+        AND outbox.noteId NOT IN (:excludedNoteIds)
+        AND NOT EXISTS (SELECT 1 FROM outbox earlier WHERE earlier.noteId = outbox.noteId AND earlier.sequence < outbox.sequence)
+        ORDER BY outbox.sequence LIMIT 1""")
+    suspend fun nextOperation(afterSequence: Long = 0, throughSequence: Long = Long.MAX_VALUE,
+        excludedNoteIds: List<String> = emptyList()): OutboxEntity?
+    @Query("SELECT COALESCE(MAX(sequence), 0) FROM outbox") suspend fun lastSequence(): Long
+    @Query("""SELECT EXISTS(SELECT 1 FROM outbox INNER JOIN notes ON notes.id = outbox.noteId
+        WHERE notes.syncState = 'PENDING' AND outbox.noteId NOT IN (:excludedNoteIds))""")
+    suspend fun hasEligiblePending(excludedNoteIds: List<String>): Boolean
+    @Query("SELECT afterSequence FROM sync_cursor WHERE id = 0") suspend fun syncCursor(): Long?
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putSyncCursor(cursor: SyncCursorEntity)
     @Query("SELECT COUNT(*) FROM outbox WHERE noteId = :id") suspend fun pendingCount(id: String): Int
     @Query("SELECT COUNT(*) FROM notes WHERE syncState = 'CONFLICT'") suspend fun conflictCount(): Int
     @Query("SELECT COUNT(*) FROM notes WHERE syncState = 'REJECTED'") suspend fun rejectedCount(): Int
@@ -91,12 +112,18 @@ interface NotesDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putDemoNote(note: DemoNoteEntity)
     @Query("SELECT * FROM demo_operations WHERE operationId = :id") suspend fun demoOperation(id: String): DemoOperationEntity?
     @Insert suspend fun putDemoOperation(operation: DemoOperationEntity)
+    @Query("DELETE FROM demo_operations WHERE operationId = :id") suspend fun removeDemoOperation(id: String)
+    @Query("UPDATE demo_operations SET requestJson = :fingerprint WHERE operationId = :id")
+    suspend fun compactDemoOperation(id: String, fingerprint: String)
+    @Query("""DELETE FROM demo_operations WHERE NOT EXISTS
+        (SELECT 1 FROM outbox WHERE outbox.operationId = demo_operations.operationId)""")
+    suspend fun pruneAcknowledgedDemoOperations()
 }
 
 @Database(
     entities = [ProjectEntity::class, NoteEntity::class, OutboxEntity::class, ConflictEntity::class,
-        DemoNoteEntity::class, DemoOperationEntity::class],
-    version = 2,
+        DemoNoteEntity::class, DemoOperationEntity::class, SyncCursorEntity::class],
+    version = 3,
     exportSchema = true,
 )
 abstract class FieldNotesDatabase : RoomDatabase() {
@@ -110,9 +137,19 @@ abstract class FieldNotesDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_syncState ON notes(syncState)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS sync_cursor (id INTEGER NOT NULL, afterSequence INTEGER NOT NULL, PRIMARY KEY(id))")
+                // Pending operations, including uncertain committed writes, retain their receipts.
+                db.execSQL("""DELETE FROM demo_operations WHERE NOT EXISTS
+                    (SELECT 1 FROM outbox WHERE outbox.operationId = demo_operations.operationId)""")
+            }
+        }
+
         fun create(context: Context, name: String = "field-notes.db"): FieldNotesDatabase =
             Room.databaseBuilder(context, FieldNotesDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

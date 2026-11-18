@@ -30,6 +30,8 @@ sealed interface PushResult {
     data class Conflict(val current: RemoteNote) : PushResult
     /** The server explicitly guarantees this mutation was not committed. */
     data object Rejected : PushResult
+    /** Outcome is unknown. Retain this exact operation and defer its note for the current pass. */
+    data object Deferred : PushResult
 }
 
 class AuthenticationFailure : Exception()

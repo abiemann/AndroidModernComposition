@@ -26,7 +26,7 @@ In the local flavor, **Server access** in Settings reports whether a credential 
 
 The optional Windows [`verify-local-server.ps1`](../scripts/verify-local-server.ps1) helper runs a real-HTTP repository integration check with an isolated Room database, an isolated server database, and a fresh short-lived token. It does not drive screens or run in routine CI. Start an emulator, then run it with `-PythonExecutable` pointing to a real Python executable. It checks both process ownership of the listening port and an authenticated empty snapshot before invoking only `dev.fieldnotes.LocalServerIntegrationTest`. It never attaches to an existing service. This is additional evidence beyond a MockWebServer contract test; it does not imply a deployed backend.
 
-WorkManager may defer execution because of constraints, backoff, Doze, or system scheduling. “Enqueued” is not “finished.” Inspect work with Android Studio's Background Task Inspector. Explain why the UI's Save result reports a durable local write rather than promising immediate remote delivery.
+Inspect `notes-sync-wake` and `notes-sync-drain` in Android Studio's Background Task Inspector after a burst of saves. WorkManager can defer the drain because of constraints, backoff, Doze, or system scheduling. Explain how the wakeup preserves an edit made while a drain finishes and why Save can succeed before remote delivery.
 
 ## 4. Replay, concurrent edits, and conflicts
 
@@ -58,7 +58,7 @@ Inspect both Compose screens and the Java/XML Activity manually. The automated s
 | Java formatter unit | Existing Java formatting behavior is callable and testable independently of the Activity. | `legacy/src/test`; routine CI |
 | Platform policy and telemetry | Worker outcome policy and Robolectric consent/local-metric behavior. | `app/src/test`; routine CI |
 | Database/platform integration | Atomic note/outbox writes, conflicts, races, tombstones, migration preservation, preferences and permission gating. | `data/src/androidTest`; optional manual device run |
-| Credential/worker integration | Keystore tamper/atomic recovery and injected WorkManager outcomes. | `app/src/androidTest`; optional manual device run |
+| Credential/worker integration | Keystore tamper/atomic recovery, injected worker outcomes, and actual WorkManager coalescing and handoff. | `app/src/androidTest`; optional manual device run |
 | Android-to-server integration | Repository create/edit/delete and replay through Retrofit, Python, and SQLite without screen interaction. | `app/src/androidTestLocal`; optional manual helper |
 | Server integration | Actual request parsing, authentication, SQLite atomicity, persistence and replay. | `server/test_server.py`; manual command or explicitly dispatched release workflow |
 
