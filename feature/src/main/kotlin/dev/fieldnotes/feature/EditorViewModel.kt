@@ -31,7 +31,9 @@ class EditorViewModel(
     private val saveNote: SaveNote,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
-    private val noteId = savedStateHandle.get<String>("noteId")?.takeUnless { it == "new" }
+    private val sourceId = savedStateHandle.get<String>("noteId")?.takeUnless { it == "new" }
+    private val copying = savedStateHandle.get<Boolean>("copy") == true
+    private val noteId = sourceId?.takeUnless { copying }
     private val restoredDraft = savedStateHandle.get<Boolean>("initialized") == true ||
         savedStateHandle.contains("title") || savedStateHandle.contains("body")
     val title = savedStateHandle.textFieldState("titleBuffer", "title")
@@ -57,10 +59,10 @@ class EditorViewModel(
         loadJob = viewModelScope.launch {
             try {
                 val projects = repository.observeProjects().first()
-                val existing = noteId?.let { repository.observeNote(it).first() }
+                val existing = sourceId?.let { repository.observeNote(it).first() }
                 val hasDraft = restoredDraft || savedStateHandle.get<Boolean>("initialized") == true ||
                     title.text.isNotEmpty() || body.text.isNotEmpty()
-                if (existing?.syncState == SyncState.UNRECOGNIZED) {
+                if (!copying && existing?.syncState == SyncState.UNRECOGNIZED) {
                     _state.update { it.copy(loading = false, projects = projects, unrecognized = true) }
                     return@launch
                 }
@@ -69,11 +71,16 @@ class EditorViewModel(
                         missing = !hasDraft, stale = hasDraft, latestUnavailable = true) }
                     return@launch
                 }
+                val sourceDiscarded = existing?.let { it.deleted && it.syncState == SyncState.SYNCED } == true
+                if (copying && sourceId != null && (existing == null || sourceDiscarded) && !hasDraft) {
+                    _state.update { it.copy(loading = false, projects = projects, missing = true) }
+                    return@launch
+                }
                 if (replaceDraft || !hasDraft) {
                     title.setTextAndPlaceCursorAtEnd(existing?.title.orEmpty())
                     body.setTextAndPlaceCursorAtEnd(existing?.body.orEmpty())
                     savedStateHandle["projectId"] = existing?.projectId ?: projects.firstOrNull()?.id.orEmpty()
-                    savedStateHandle["expectedRevision"] = existing?.revision
+                    savedStateHandle["expectedRevision"] = existing?.revision.takeUnless { copying }
                 } else if (!savedStateHandle.contains("projectId")) {
                     savedStateHandle["projectId"] = existing?.projectId ?: projects.firstOrNull()?.id.orEmpty()
                 }

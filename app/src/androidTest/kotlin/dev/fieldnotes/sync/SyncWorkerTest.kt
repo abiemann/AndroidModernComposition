@@ -97,17 +97,17 @@ class SyncWorkerTest {
 
             scheduler.requestSync()
             val followUp = waitForWork(WorkSyncScheduler.WAKE_WORK) { it.state == WorkInfo.State.ENQUEUED }
-            val wake = TestListenableWorkerBuilder<SyncWakeWorker>(context).setWorkerFactory(factory).build()
-            assertEquals(ListenableWorker.Result.retry(), wake.doWork())
+            driver.setInitialDelayMet(followUp.id)
+            waitForWork(WorkSyncScheduler.WAKE_WORK) { it.state == WorkInfo.State.RUNNING }
             assertEquals(drain.id, waitForWork(WorkSyncScheduler.DRAIN_WORK) { it.state == WorkInfo.State.RUNNING }.id)
             assertEquals(1, passes.get())
 
             release.complete(Unit)
-            waitForWork(WorkSyncScheduler.DRAIN_WORK) { it.state == WorkInfo.State.FAILED }
-            assertEquals(true, withTimeout(15_000) { scheduler.backgroundSyncFailed.first() })
-            driver.setInitialDelayMet(followUp.id)
             val next = waitForWork(WorkSyncScheduler.DRAIN_WORK) { it.state == WorkInfo.State.ENQUEUED }
             assertNotEquals(drain.id, next.id)
+            val completedWake = waitForWork(WorkSyncScheduler.WAKE_WORK) { it.state == WorkInfo.State.SUCCEEDED }
+            assertEquals(followUp.id, completedWake.id)
+            assertEquals(1, completedWake.runAttemptCount)
             driver.setAllConstraintsMet(next.id)
             waitForWork(WorkSyncScheduler.DRAIN_WORK) { it.state == WorkInfo.State.SUCCEEDED }
             assertEquals(false, withTimeout(15_000) { scheduler.backgroundSyncFailed.first() })
@@ -144,11 +144,13 @@ class SyncWorkerTest {
     private fun repository(runSync: suspend () -> SyncResult) = object : NoteRepository {
         override fun observeNotes() = flowOf(emptyList<Note>())
         override fun observeNote(id: String) = flowOf<Note?>(null)
+        override fun observeRecovery(id: String) = flowOf<NoteRecovery?>(null)
         override fun observeProjects() = flowOf(emptyList<Project>())
         override suspend fun save(draft: NoteDraft) = "test"
         override suspend fun delete(id: String) = Unit
         override suspend fun resolveConflict(id: String, keepLocal: Boolean) = Unit
         override suspend fun retryRejected(id: String) = Unit
+        override suspend fun discardDamagedLocalCopy(id: String, expectedRevision: Long) = LocalDiscardResult.Changed
         override suspend fun sync() = runSync()
     }
 

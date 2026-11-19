@@ -16,10 +16,12 @@ import dev.fieldnotes.domain.ExperimentVariant
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val Context.fieldNotesPreferences by preferencesDataStore(name = "field-notes-settings")
 
@@ -29,10 +31,10 @@ class PreferenceDataStoreRepository(
 ) : PreferencesRepository {
     constructor(context: Context) : this(context.applicationContext.fieldNotesPreferences)
 
-    override val preferences = flow {
-        // DataStore serializes this transaction, even when multiple screens collect concurrently.
-        store.edit { if (it[INSTALLATION] == null) it[INSTALLATION] = installationIds() }
-        emitAll(store.data)
+    private val installationLock = Mutex()
+
+    override val preferences = store.data.map { stored ->
+        if (stored[INSTALLATION] != null) stored else ensureInstallation()
     }.retryWhen { error, attempt ->
         if (error is IOException) {
             // Fail closed while storage is unavailable, then keep the same collectors live.
@@ -54,6 +56,13 @@ class PreferenceDataStoreRepository(
             // Storage failure falls back safely and must not pollute experiment measurements.
             compactCardsExperiment = ExperimentAssignment(variant, isOverridden = override != null || installation == null),
         )
+    }.distinctUntilChanged()
+
+    private suspend fun ensureInstallation(): StoredPreferences = installationLock.withLock {
+        // Other collectors might have initialized the ID while this one was waiting.
+        val latest = store.data.first()
+        if (latest[INSTALLATION] != null) return@withLock latest
+        store.edit { if (it[INSTALLATION] == null) it[INSTALLATION] = installationIds() }
     }
 
     override suspend fun setCompactCards(enabled: Boolean) { store.edit { it[COMPACT] = enabled } }

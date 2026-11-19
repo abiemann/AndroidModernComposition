@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "FieldNotesSync"
 
@@ -88,23 +89,34 @@ class WorkSyncScheduler(private val context: Context, demo: Boolean) : SyncSched
         requestSync()
     }
 
-    internal suspend fun ensureDrainScheduled(): Boolean {
+    internal suspend fun ensureDrainScheduled(): Boolean = withTimeoutOrNull(DRAIN_HANDOFF_TIMEOUT_MILLIS) {
         val active = workManager.getWorkInfosForUniqueWorkFlow(DRAIN_WORK).first()
         // A queued worker will take its outbox watermark after this signal.
-        if (active.any { it.state == WorkInfo.State.ENQUEUED }) return true
+        if (active.any { it.state == WorkInfo.State.ENQUEUED }) return@withTimeoutOrNull true
+        val running = active.firstOrNull { it.state == WorkInfo.State.RUNNING }
+        if (running != null) {
+            // KEEP would ignore a request while this drain still owns the unique name.
+            // Observe its transition instead of waiting until WorkManager's next backoff window.
+            val next = workManager.getWorkInfoByIdFlow(running.id).first { it?.state != WorkInfo.State.RUNNING }
+            if (next?.state == WorkInfo.State.ENQUEUED) return@withTimeoutOrNull true
+        }
+
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
+        // A new drain racing this enqueue will also take its watermark after the signal.
         workManager.enqueueUniqueWork(DRAIN_WORK, ExistingWorkPolicy.KEEP, request).await()
-        // If KEEP declined the insert, keep the signal alive until the running drain finishes.
-        return workManager.getWorkInfoByIdFlow(request.id).first() != null
-    }
+        true
+    } ?: false
 
     internal companion object {
         const val WAKE_WORK = "notes-sync-wake"
         const val DRAIN_WORK = "notes-sync-drain"
         private const val HOURLY_WORK = "notes-sync-hourly"
+        // A production drain allows 120 seconds. Bound waiting too, with WorkManager retries
+        // available for unusually delayed transitions and transient scheduler failures.
+        private const val DRAIN_HANDOFF_TIMEOUT_MILLIS = 150_000L
     }
 }
 
@@ -112,12 +124,16 @@ class SyncWakeWorker(
     context: Context, parameters: WorkerParameters,
     private val scheduler: WorkSyncScheduler,
 ) : CoroutineWorker(context, parameters) {
-    override suspend fun doWork(): Result = try {
-        if (scheduler.ensureDrainScheduled()) Result.success() else Result.retry()
-    } catch (error: Exception) {
-        if (error is CancellationException) throw error
-        Log.w(TAG, "Could not schedule drain: ${error.javaClass.simpleName}")
-        if (unexpectedFailureDecision(runAttemptCount) == WorkDecision.RETRY) Result.retry() else Result.failure()
+    override suspend fun doWork(): Result {
+        val failure = try {
+            if (scheduler.ensureDrainScheduled()) return Result.success()
+            "Timed out waiting to schedule a drain"
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            "Could not schedule drain: ${error.javaClass.simpleName}"
+        }
+        Log.w(TAG, failure)
+        return if (unexpectedFailureDecision(runAttemptCount) == WorkDecision.RETRY) Result.retry() else Result.failure()
     }
 }
 

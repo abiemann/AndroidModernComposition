@@ -19,6 +19,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import dev.fieldnotes.domain.ExperimentAssignment
+import dev.fieldnotes.domain.SyncState
 import org.koin.androidx.compose.koinViewModel
 
 private data class Destination(val route: String, val label: Int, val icon: ImageVector)
@@ -140,16 +141,26 @@ fun FieldNotesApp(environmentName: String = "Demo", onOpenLegacy: () -> Unit = {
                             }
                             composable("note/{noteId}", arguments = listOf(navArgument("noteId") { type = NavType.StringType })) { noteEntry ->
                                 val id = noteEntry.arguments?.getString("noteId").orEmpty()
+                                val note = state.notesById[id]
+                                val recovery = if (note?.syncState == SyncState.CONFLICT) {
+                                    val recoveryFlow = remember(id) { journal.observeRecovery(id) }
+                                    recoveryFlow.collectAsStateWithLifecycle(NoteRecoveryUiState()).value
+                                } else NoteRecoveryUiState()
                                 NoteScreen(
-                                    note = state.notesById[id], projects = state.projects,
+                                    note = note, projects = state.projects, recovery = recovery,
                                     loading = state.loading, loadFailed = state.loadFailed,
                                     onEdit = { nav.navigate("edit/${Uri.encode(id)}") },
                                     onDelete = { journal.delete(id); nav.popBackStack() },
                                     onResolve = { keepLocal -> journal.resolveConflict(id, keepLocal) },
                                     onRetryLoad = journal::retry, onRetrySync = { journal.retryRejected(id) },
+                                    onSaveCopy = { nav.navigate("edit/${Uri.encode(id)}?copy=true") },
+                                    onDiscardLocalCopy = { revision -> journal.discardDamagedLocalCopy(id, revision) },
                                 )
                             }
-                            composable("edit/{noteId}", arguments = listOf(navArgument("noteId") { type = NavType.StringType })) { editorEntry ->
+                            composable("edit/{noteId}?copy={copy}", arguments = listOf(
+                                navArgument("noteId") { type = NavType.StringType },
+                                navArgument("copy") { type = NavType.BoolType; defaultValue = false },
+                            )) { editorEntry ->
                                 val editor: EditorViewModel = koinViewModel()
                                 val editorState by editor.state.collectAsStateWithLifecycle()
                                 LaunchedEffect(editorState.savedId) {
@@ -196,4 +207,7 @@ private fun Feedback.messageResource() = when (this) {
     Feedback.FAILED -> R.string.operation_failed
     Feedback.DELETED -> R.string.note_deleted
     Feedback.RESOLVED -> R.string.conflict_resolved
+    Feedback.LOCAL_COPY_DISCARDED -> R.string.note_local_copy_discarded
+    Feedback.RECOVERY_CHANGED -> R.string.note_recovery_changed
+    Feedback.RECOVERY_SYNC_IN_PROGRESS -> R.string.note_recovery_sync_in_progress
 }

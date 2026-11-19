@@ -1,5 +1,11 @@
 # Verification record
 
+## Audit feedback fixes (November 18, 2026)
+
+Validation on Temurin JDK 21.0.13 passed **90 JVM tests** (domain 11, data 25, feature 39, legacy 2, app 13), both debug APK builds, and all three non-UI test APK assemblies. Both debug lint tasks passed in a fresh process after the original Gradle JVM crashed in native `zip.dll` during lint. The merged manifests for both flavors disable backup and retain the Android 12+ data extraction rules. The Python suites passed **24 server tests** and **4 report tests**, and workflow syntax, documentation links, and whitespace checks passed.
+
+On the isolated API 36 emulator, **48 non-UI Android checks** passed (41 data and 7 app), plus **one live Android-to-Python HTTP test**. Regression coverage includes read-only DataStore access after ID initialization, a 100-mutation backlog with one snapshot, snapshot cadence, a slow batch that continues without hitting its hard deadline, a WorkManager handoff that completes on its first attempt, and local recovery that preserves unrelated queue entries and rejects stale drafts. No functional UI tests were added or run.
+
 ## Follow-up engineering audit (November 18, 2026)
 
 The final Gradle build on Temurin JDK 21.0.13 passed **87 JVM tests** (domain 11, data 24, feature 37, legacy 2, app 13), both debug APK builds, both debug lint tasks, and all three non-UI test APK assemblies. The profile task graphs resolved in a Gradle dry run. The Python suites passed **24 server tests** and **4 report tests**. Workflow syntax, documentation links, and whitespace checks passed.

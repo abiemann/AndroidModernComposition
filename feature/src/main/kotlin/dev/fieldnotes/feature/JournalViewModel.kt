@@ -41,7 +41,10 @@ data class JournalUiState(
 enum class Feedback {
     SYNCED, CONFLICTS, SIGN_IN, LOCAL_NETWORK, OFFLINE, REJECTED, PAUSED, FAILED, DELETED,
     RESOLVED, RETRY_QUEUED, CONTINUING, DEFERRED, RETRY_NOT_SCHEDULED, TIMED_OUT, TIMED_OUT_QUEUED,
+    LOCAL_COPY_DISCARDED, RECOVERY_CHANGED, RECOVERY_SYNC_IN_PROGRESS,
 }
+
+internal data class NoteRecoveryUiState(val note: NoteRecovery? = null, val loadFailed: Boolean = false)
 
 /** The screen sends actions here; only repositories produce durable application state. */
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -128,6 +131,15 @@ class JournalViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), JournalUiState())
 
     fun retry() { reload.update { it + 1 } }
+    internal fun observeRecovery(id: String): Flow<NoteRecoveryUiState> = reload.flatMapLatest {
+        repository.observeRecovery(id).map { NoteRecoveryUiState(note = it) }
+            .onStart { emit(NoteRecoveryUiState()) }
+            .catch { error ->
+                if (error is CancellationException) throw error
+                emit(NoteRecoveryUiState(loadFailed = true))
+            }
+    }
+
     suspend fun recordExposure(assignment: ExperimentAssignment): Boolean = try {
         telemetry.recordExposure(assignment)
         true
@@ -177,6 +189,24 @@ class JournalViewModel(
         repository.resolveConflict(id, keepLocal)
     }
     fun retryRejected(id: String) = perform(Feedback.RETRY_QUEUED) { repository.retryRejected(id) }
+
+    fun discardDamagedLocalCopy(id: String, expectedRevision: Long) {
+        viewModelScope.launch {
+            try {
+                _feedback.value = when (repository.discardDamagedLocalCopy(id, expectedRevision)) {
+                    LocalDiscardResult.Discarded -> {
+                        scheduleContinuation()
+                        Feedback.LOCAL_COPY_DISCARDED
+                    }
+                    LocalDiscardResult.Changed -> Feedback.RECOVERY_CHANGED
+                    LocalDiscardResult.SyncInProgress -> Feedback.RECOVERY_SYNC_IN_PROGRESS
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                _feedback.value = Feedback.FAILED
+            }
+        }
+    }
 
     private suspend fun scheduleContinuation(): Boolean = try {
         withTimeoutOrNull(2_000) { scheduler.requestSync(); true } ?: false

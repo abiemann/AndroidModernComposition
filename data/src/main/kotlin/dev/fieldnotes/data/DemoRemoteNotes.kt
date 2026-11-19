@@ -3,8 +3,12 @@ package dev.fieldnotes.data
 import androidx.room.withTransaction
 
 /** A persistent, local server simulator. It never claims that data reached an external server. */
-class DemoRemoteNotes(private val database: FieldNotesDatabase) : RemoteNotes {
+class DemoRemoteNotes(private val database: FieldNotesDatabase) : RemoteNotes, ReplayReceiptCleanup {
     private val dao = database.notes()
+
+    override suspend fun removeAcknowledged(operationId: String) = dao.removeDemoOperation(operationId)
+
+    override suspend fun pruneOrphans() = dao.pruneAcknowledgedDemoOperations()
 
     override suspend fun snapshot() = database.withTransaction {
         Snapshot(OfflineFirstNoteRepository.DEFAULT_PROJECTS,

@@ -21,6 +21,8 @@ import retrofit2.http.GET
 import retrofit2.http.PUT
 import retrofit2.http.Path
 
+internal const val HTTP_CALL_TIMEOUT_SECONDS = 30L
+
 interface NotesApi {
     @GET("v1/notes") suspend fun snapshot(): Response<ResponseBody>
     @PUT("v1/notes/{id}") suspend fun push(@Path("id") id: String, @Body mutation: Mutation): Response<ResponseBody>
@@ -162,7 +164,7 @@ class RetrofitRemoteNotes(private val api: NotesApi) : RemoteNotes {
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)
-                .callTimeout(30, TimeUnit.SECONDS)
+                .callTimeout(HTTP_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .retryOnConnectionFailure(false)

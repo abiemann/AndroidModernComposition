@@ -57,6 +57,46 @@ class ViewModelTest {
     private fun editor(handle: SavedStateHandle = SavedStateHandle()) =
         EditorViewModel(repository, SaveNote(repository, scheduler, telemetry), handle)
 
+    @Test fun `copying a damaged note starts a new draft without reusing its identity`() = runTest(dispatcher) {
+        val original = Note("damaged", "field", "Local text", "Unsent body", 1000, 12, SyncState.UNRECOGNIZED)
+        repository.notes.value = listOf(original)
+        val vm = editor(SavedStateHandle(mapOf("noteId" to original.id, "copy" to true)))
+        runCurrent()
+
+        assertFalse(vm.state.value.editing)
+        assertFalse(vm.state.value.unrecognized)
+        assertEquals(original.title, vm.title.text.toString())
+        assertEquals(original.body, vm.body.text.toString())
+        vm.save()
+        runCurrent()
+
+        assertEquals(NoteDraft(projectId = "field", title = original.title, body = original.body), repository.lastDraft)
+        assertEquals("note-1", vm.state.value.savedId)
+        assertEquals(listOf(original), repository.notes.value)
+    }
+
+    @Test fun `local discard passes the confirmed revision and only schedules sync after success`() = runTest(dispatcher) {
+        val vm = JournalViewModel(repository, settings, scheduler, SavedStateHandle(), telemetry, dispatcher)
+        vm.discardDamagedLocalCopy("damaged", 12)
+        runCurrent()
+        assertEquals("damaged" to 12L, repository.lastDiscard)
+        assertEquals(Feedback.RECOVERY_CHANGED, vm.feedback.value)
+        assertEquals(0, schedules)
+
+        repository.discardResult = LocalDiscardResult.SyncInProgress
+        vm.discardDamagedLocalCopy("damaged", 12)
+        runCurrent()
+        assertEquals(Feedback.RECOVERY_SYNC_IN_PROGRESS, vm.feedback.value)
+        assertEquals(0, schedules)
+
+        repository.discardResult = LocalDiscardResult.Discarded
+        vm.discardDamagedLocalCopy("damaged", 13)
+        runCurrent()
+        assertEquals("damaged" to 13L, repository.lastDiscard)
+        assertEquals(Feedback.LOCAL_COPY_DISCARDED, vm.feedback.value)
+        assertEquals(1, schedules)
+    }
+
     // Drive the same saved-state provider that an owner calls at process-state capture.
     @SuppressLint("RestrictedApi")
     private fun restoredHandle(handle: SavedStateHandle): SavedStateHandle =
@@ -610,6 +650,8 @@ private class FakeNotes : NoteRepository {
     var lastDeleteId: String? = null
     var lastRetryId: String? = null
     var lastResolution: Pair<String, Boolean>? = null
+    var lastDiscard: Pair<String, Long>? = null
+    var discardResult = LocalDiscardResult.Changed
     var syncResult: SyncResult = SyncResult.Success(0, 0)
     var syncAction: (suspend () -> SyncResult)? = null
     var syncCalls = 0
@@ -618,6 +660,7 @@ private class FakeNotes : NoteRepository {
         emitAll(notes)
     }
     override fun observeNote(id: String): Flow<Note?> = notes.map { list -> list.find { it.id == id } }
+    override fun observeRecovery(id: String): Flow<NoteRecovery?> = flowOf(null)
     override fun observeProjects(): Flow<List<Project>> = flow {
         if (failProjects) error("projects unavailable")
         emit(listOf(Project("field", "Fieldwork"), Project("study", "Study")))
@@ -634,6 +677,10 @@ private class FakeNotes : NoteRepository {
         if (failDelete) error("storage unavailable")
     }
     override suspend fun resolveConflict(id: String, keepLocal: Boolean) { lastResolution = id to keepLocal }
+    override suspend fun discardDamagedLocalCopy(id: String, expectedRevision: Long): LocalDiscardResult {
+        lastDiscard = id to expectedRevision
+        return discardResult
+    }
     override suspend fun retryRejected(id: String) {
         lastRetryId = id
         if (failRetry) error("retry unavailable")

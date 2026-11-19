@@ -24,11 +24,13 @@ import dev.fieldnotes.domain.*
 
 @Composable
 internal fun NoteScreen(
-    note: Note?, projects: List<Project>, loading: Boolean, loadFailed: Boolean,
+    note: Note?, projects: List<Project>, recovery: NoteRecoveryUiState, loading: Boolean, loadFailed: Boolean,
     onEdit: () -> Unit, onDelete: () -> Unit, onResolve: (Boolean) -> Unit,
     onRetryLoad: () -> Unit, onRetrySync: () -> Unit,
+    onSaveCopy: () -> Unit, onDiscardLocalCopy: (Long) -> Unit,
 ) {
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var discardRevision by rememberSaveable(note?.id) { mutableStateOf<Long?>(null) }
     if (loading) {
         LoadingScreen()
         return
@@ -51,7 +53,10 @@ internal fun NoteScreen(
             SyncBadge(note)
             Text(stringResource(R.string.updated, formatDate(note.updatedAt)),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (note.syncState == SyncState.CONFLICT) {
+            val conflict = note.syncState == SyncState.CONFLICT
+            val checked = recovery.note?.takeIf { it.revision == note.revision }
+            val needsRecovery = note.syncState == SyncState.UNRECOGNIZED || (conflict && checked?.required == true)
+            if (conflict && checked?.required == false) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.conflict_heading), style = MaterialTheme.typography.titleMedium)
@@ -59,6 +64,14 @@ internal fun NoteScreen(
                         Button(onClick = { onResolve(true) }) { Text(stringResource(R.string.keep_local)) }
                         OutlinedButton(onClick = { onResolve(false) }) { Text(stringResource(R.string.use_server)) }
                     }
+                }
+            }
+            if (conflict && checked == null) {
+                if (recovery.loadFailed) {
+                    Text(stringResource(R.string.note_load_failed), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    OutlinedButton(onClick = onRetryLoad) { Text(stringResource(R.string.retry)) }
+                } else {
+                    Text(stringResource(R.string.conflict_checking))
                 }
             }
             if (note.syncState == SyncState.REJECTED) {
@@ -70,15 +83,22 @@ internal fun NoteScreen(
                     }
                 }
             }
-            if (note.syncState == SyncState.UNRECOGNIZED) {
-                Text(stringResource(R.string.note_unrecognized_body), color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            if (needsRecovery) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Column(Modifier.padding(FieldNotesSpacing.Large), verticalArrangement = Arrangement.spacedBy(FieldNotesSpacing.Medium)) {
+                        Text(stringResource(R.string.note_recovery_heading), style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.semantics { heading() })
+                        Text(stringResource(R.string.note_recovery_body), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                        OutlinedButton(onClick = onSaveCopy) { Text(stringResource(R.string.note_save_copy)) }
+                        TextButton(onClick = { discardRevision = note.revision }) { Text(stringResource(R.string.note_discard_copy)) }
+                    }
+                }
             }
             HorizontalDivider()
             Text(note.body, style = MaterialTheme.typography.bodyLarge)
             Text(stringResource(R.string.revision, note.revision), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!note.deleted && note.syncState != SyncState.UNRECOGNIZED) {
+            if (!note.deleted && !needsRecovery && (!conflict || checked != null)) {
                 Button(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.Edit, null)
                     Spacer(Modifier.width(8.dp))
@@ -99,6 +119,20 @@ internal fun NoteScreen(
         confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text(stringResource(R.string.delete)) } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.cancel)) } },
     )
+    discardRevision?.let { revision ->
+        AlertDialog(
+            onDismissRequest = { discardRevision = null },
+            title = { Text(stringResource(R.string.note_discard_title)) },
+            text = { Text(stringResource(R.string.note_discard_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { discardRevision = null; onDiscardLocalCopy(revision) },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.note_discard_copy)) }
+            },
+            dismissButton = { TextButton(onClick = { discardRevision = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
 }
 
 @Composable

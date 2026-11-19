@@ -8,6 +8,7 @@ import dev.fieldnotes.data.DemoRemoteNotes
 import dev.fieldnotes.data.FieldNotesDatabase
 import dev.fieldnotes.data.OfflineFirstNoteRepository
 import dev.fieldnotes.data.PreferenceDataStoreRepository
+import dev.fieldnotes.data.ReplayReceiptCleanup
 import dev.fieldnotes.data.RemoteNotes
 import dev.fieldnotes.data.RetrofitRemoteNotes
 import dev.fieldnotes.data.PermissionAwareRemoteNotes
@@ -53,7 +54,10 @@ class FieldNotesApplication : Application(), Configuration.Provider {
                     if (BuildConfig.DEMO) DemoRemoteNotes(get()) else PermissionAwareRemoteNotes(
                         get(), RetrofitRemoteNotes.create(BuildConfig.API_BASE_URL, get()))
                 }
-                single<NoteRepository> { OfflineFirstNoteRepository(get(), get(), get(), get()) }
+                single<NoteRepository> {
+                    val remote = get<RemoteNotes>()
+                    OfflineFirstNoteRepository(get(), remote, get(), get(), replayReceipts = remote as? ReplayReceiptCleanup)
+                }
                 single<PreferencesRepository> { PreferenceDataStoreRepository(get<android.content.Context>()) }
                 single { WorkSyncScheduler(get(), BuildConfig.DEMO) }
                 single<SyncScheduler> { get<WorkSyncScheduler>() }
@@ -66,15 +70,22 @@ class FieldNotesApplication : Application(), Configuration.Provider {
                 viewModel { SettingsViewModel(get(), get()) }
             })
         }.koin
-        applicationScope.launch(Dispatchers.IO) {
+        launchStartupTask("diagnostics") {
             dependencies.get<LocalTelemetry>().installCrashHandler()
         }
+        launchStartupTask("sync scheduling") {
+            dependencies.get<WorkSyncScheduler>().initialize()
+        }
+    }
+
+    private fun launchStartupTask(name: String, task: suspend () -> Unit) {
         applicationScope.launch(Dispatchers.IO) {
             try {
-                dependencies.get<WorkSyncScheduler>().initialize()
+                task()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                Log.w("FieldNotesSync", "Could not initialize sync scheduling: ${error.javaClass.simpleName}")
+                Log.w("FieldNotesStartup", "Could not initialize $name: ${error.javaClass.simpleName}")
             }
         }
     }

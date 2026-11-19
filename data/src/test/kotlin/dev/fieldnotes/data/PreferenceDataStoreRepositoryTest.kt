@@ -38,6 +38,24 @@ class PreferenceDataStoreRepositoryTest {
         assertTrue(results.all { it.compactCardsExperiment == results.first().compactCardsExperiment })
         val recreated = PreferenceDataStoreRepository(store) { error("An identity already exists") }
         assertEquals(results.first(), recreated.preferences.first())
+        assertEquals(1, store.writeAttempts)
+    }
+
+    @Test fun initializedReadsNeedNoUpdateAndSeeTheLatestConsent() = runTest {
+        val store = MemoryStore()
+        val repository = PreferenceDataStoreRepository(store) { "installation-123" }
+        repository.preferences.first()
+        repository.setAnalyticsEnabled(true)
+        val writes = store.writeAttempts
+
+        store.writeFailures = 1
+        repeat(3) { assertTrue(repository.preferences.first().analyticsEnabled) }
+        assertEquals(writes, store.writeAttempts)
+
+        store.writeFailures = 0
+        repository.setAnalyticsEnabled(false)
+        assertFalse(repository.preferences.first().analyticsEnabled)
+        assertEquals(writes + 1, store.writeAttempts)
     }
 
     @Test fun overrideIsExplicitAndResetRestoresOriginalAssignment() = runTest {

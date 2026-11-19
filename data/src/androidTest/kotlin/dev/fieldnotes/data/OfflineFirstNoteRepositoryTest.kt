@@ -11,6 +11,9 @@ import dev.fieldnotes.domain.StaleNoteEdit
 import dev.fieldnotes.domain.SyncResult
 import dev.fieldnotes.domain.SyncState
 import java.io.IOException
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -32,7 +35,7 @@ class OfflineFirstNoteRepositoryTest {
     @Before fun setUp() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), FieldNotesDatabase::class.java).build()
         remote = TestRemote(DemoRemoteNotes(db))
-        repository = OfflineFirstNoteRepository(db, remote, Clock { time++ }, IdGenerator { "id-${++identifier}" })
+        repository = limitedRepository()
     }
 
     @After fun tearDown() { db.close() }
@@ -323,7 +326,44 @@ class OfflineFirstNoteRepositoryTest {
         assertNull(db.notes().nextOperation())
     }
 
+    @Test fun defaultBudgetDrainsAHundredQueuedWritesWithOneSnapshot() = runBlocking {
+        repeat(100) { repository.save(NoteDraft(projectId = "field", title = "Note $it", body = "")) }
+        assertEquals(SyncResult.Success(100, 0), repository.sync())
+        assertEquals(1, remote.snapshotCalls)
+        assertNull(db.notes().nextOperation())
+    }
+
+    @Test fun largeHealthyBacklogsPullAtBoundedIntervalsAndAtCompletion() = runBlocking {
+        repository = limitedRepository(maxOperations = 1)
+        repeat(6) { repository.save(NoteDraft(projectId = "field", title = "Note $it", body = "")) }
+        val snapshotCounts = (1..6).map { pass ->
+            assertEquals(SyncResult.Success(1, 0, morePending = pass < 6), repository.sync())
+            remote.snapshotCalls
+        }
+        assertEquals(listOf(1, 1, 1, 2, 2, 3), snapshotCounts)
+
+        repeat(2) { repository.save(NoteDraft(projectId = "field", title = "New backlog $it", body = "")) }
+        assertEquals(SyncResult.Success(1, 0, morePending = true), repository.sync())
+        assertEquals(4, remote.snapshotCalls)
+    }
+
+    @Test fun slowHealthyBatchReturnsAContinuationBeforeItsHardDeadline() = runBlocking {
+        val elapsed = TestTimeSource()
+        repository = limitedRepository(syncTimeSource = elapsed)
+        repeat(2) { repository.save(NoteDraft(projectId = "field", title = "Note $it", body = "")) }
+        remote.beforePush = {
+            remote.beforePush = null
+            elapsed += 60.seconds
+        }
+        assertEquals(SyncResult.Success(1, 0, morePending = true), repository.sync())
+        assertEquals(1, remote.snapshotCalls)
+        assertNotNull(db.notes().nextOperation())
+        assertEquals(SyncResult.Success(1, 0), repository.sync())
+        assertEquals(2, remote.snapshotCalls)
+    }
+
     @Test fun allDeferredBatchBacksOffAndCursorReachesLaterHealthyNotesWithoutOvertakingHeads() = runBlocking {
+        repository = limitedRepository(maxOperations = 8)
         val deferredIds = (1..8).map { repository.save(NoteDraft(projectId = "field", title = "Deferred $it", body = "")) }
         val firstHead = db.notes().nextOperation()!!
         val healthyId = repository.save(NoteDraft(projectId = "field", title = "Ninth healthy note", body = ""))
@@ -443,9 +483,13 @@ class OfflineFirstNoteRepositoryTest {
         assertEquals(1, db.notes().pendingCount(pendingId))
     }
 
-    private fun limitedRepository(maxOperations: Int = 8, timeoutMillis: Long = 120_000) =
+    private fun limitedRepository(
+        maxOperations: Int = SyncLimits().maxOperations,
+        timeoutMillis: Long = SyncLimits().timeoutMillis,
+        syncTimeSource: TimeSource = TimeSource.Monotonic,
+    ) =
         OfflineFirstNoteRepository(db, remote, Clock { time++ }, IdGenerator { "id-${++identifier}" },
-            SyncLimits(maxOperations, timeoutMillis))
+            SyncLimits(maxOperations, timeoutMillis), replayReceipts = remote.delegate, syncTimeSource = syncTimeSource)
 
     private suspend fun edit(id: String, title: String, body: String = "") = repository.save(
         NoteDraft(id, "field", title, body, repository.observeNote(id).first()!!.revision),
@@ -457,7 +501,7 @@ class OfflineFirstNoteRepositoryTest {
         return id
     }
 
-    private class TestRemote(val delegate: RemoteNotes) : RemoteNotes {
+    private class TestRemote(val delegate: DemoRemoteNotes) : RemoteNotes {
         var failure: Exception? = null
         var beforePush: (suspend () -> Unit)? = null
         var loseNextResponse = false
@@ -465,9 +509,11 @@ class OfflineFirstNoteRepositoryTest {
         val deferredIds = mutableSetOf<String>()
         val attempted = mutableListOf<Pair<String, Mutation>>()
         var snapshotOverride: Snapshot? = null
+        var snapshotCalls = 0
         var canonicalTitle: String? = null
         override suspend fun snapshot(): Snapshot {
             failure?.let { throw it }
+            snapshotCalls++
             return snapshotOverride ?: delegate.snapshot()
         }
         override suspend fun push(id: String, mutation: Mutation): PushResult {

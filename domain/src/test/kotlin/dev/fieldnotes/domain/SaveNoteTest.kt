@@ -69,9 +69,11 @@ class SaveNoteTest {
         override suspend fun save(draft: NoteDraft): String { if (fail) throw IOException(); saved = draft; return "new-note" }
         override fun observeNotes() = flowOf(emptyList<Note>())
         override fun observeNote(id: String): Flow<Note?> = flowOf(null)
+        override fun observeRecovery(id: String): Flow<NoteRecovery?> = flowOf(null)
         override fun observeProjects() = flowOf(emptyList<Project>())
         override suspend fun delete(id: String) = Unit
         override suspend fun resolveConflict(id: String, keepLocal: Boolean) = Unit
+        override suspend fun discardDamagedLocalCopy(id: String, expectedRevision: Long) = LocalDiscardResult.Changed
         override suspend fun retryRejected(id: String) = Unit
         override suspend fun sync() = SyncResult.Success(0, 0)
     }

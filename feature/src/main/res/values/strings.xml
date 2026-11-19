@@ -47,7 +47,16 @@
     <string name="revision">Local revision %1$d</string>
     <string name="note_rejected">Sync paused · review note</string>
     <string name="note_unrecognized">Unavailable for changes</string>
-    <string name="note_unrecognized_body">This note cannot be changed safely. Its saved contents have been kept. Update the app or contact support before changing it.</string>
+    <string name="note_unrecognized_body">This note cannot be edited safely. Open its details for recovery options.</string>
+    <string name="note_recovery_heading">This local copy needs attention</string>
+    <string name="note_recovery_body">The app cannot apply changes to this copy safely. You can save its text as a new note or discard this copy.</string>
+    <string name="note_save_copy">Save as a new note</string>
+    <string name="note_discard_copy">Discard local copy</string>
+    <string name="note_discard_title">Discard this local copy?</string>
+    <string name="note_discard_body">This removes the local copy and any queued changes for it. A copy already on the server may reappear after sync.</string>
+    <string name="note_local_copy_discarded">Local copy discarded.</string>
+    <string name="note_recovery_changed">This note has changed. Review it before trying again.</string>
+    <string name="note_recovery_sync_in_progress">Sync is in progress. Try again when it finishes.</string>
     <string name="deletion_rejected">Sync paused · review deletion</string>
     <string name="rejected_heading">Sync needs your attention</string>
     <string name="rejected_note_body">The server did not accept this note. You can edit it below, or retry after correcting the server problem. Your local version is preserved.</string>
@@ -61,6 +70,7 @@
     <string name="reload_latest_confirmation">Loading the latest version replaces your unsaved draft. To keep this text, cancel and save it as a new note first. If the original is no longer available, your draft will be kept.</string>
     <string name="missing_note">This note is no longer available.</string>
     <string name="conflict_heading">Two versions need your attention</string>
+    <string name="conflict_checking">Checking the stored conflict…</string>
     <string name="conflict_body">The server changed while this device had unsynced edits. Keep this device’s version to retry it against the latest server revision, or replace it with the server version.</string>
     <string name="keep_local">Keep my version</string>
     <string name="use_server">Use server version</string>

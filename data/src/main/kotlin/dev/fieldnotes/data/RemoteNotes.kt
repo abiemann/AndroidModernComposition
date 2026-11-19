@@ -42,3 +42,9 @@ interface RemoteNotes {
     suspend fun snapshot(): Snapshot
     suspend fun push(id: String, mutation: Mutation): PushResult
 }
+
+/** Optional on-device receipts. The repository calls this within the same Room transaction as the outbox change. */
+interface ReplayReceiptCleanup {
+    suspend fun removeAcknowledged(operationId: String)
+    suspend fun pruneOrphans()
+}

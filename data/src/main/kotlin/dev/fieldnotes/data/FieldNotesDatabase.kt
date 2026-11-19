@@ -38,6 +38,8 @@ data class NoteEntity(
 
 data class NoteVersion(val id: String, val localRevision: Long, val serverVersion: Long, val syncState: String)
 
+data class NoteRecoveryRecord(val revision: Long, val syncState: String, val remoteJson: String?)
+
 /** Immutable edit snapshots survive process death and ambiguous network failures. */
 @Entity(tableName = "outbox", indices = [Index(value = ["operationId"], unique = true), Index("noteId")])
 data class OutboxEntity(
@@ -73,6 +75,9 @@ interface NotesDao {
     @Query("SELECT * FROM notes WHERE deleted = 0 OR syncState != 'SYNCED' ORDER BY updatedAt DESC, id")
     fun observeNotes(): Flow<List<NoteEntity>>
     @Query("SELECT * FROM notes WHERE id = :id") fun observeNote(id: String): Flow<NoteEntity?>
+    @Query("""SELECT notes.localRevision AS revision, notes.syncState, conflicts.remoteJson
+        FROM notes LEFT JOIN conflicts ON notes.id = conflicts.noteId WHERE notes.id = :id""")
+    fun observeRecovery(id: String): Flow<NoteRecoveryRecord?>
     @Query("SELECT * FROM projects ORDER BY name") fun observeProjects(): Flow<List<ProjectEntity>>
     @Query("SELECT * FROM notes WHERE id = :id") suspend fun note(id: String): NoteEntity?
     @Query("SELECT * FROM projects WHERE id = :id") suspend fun project(id: String): ProjectEntity?
